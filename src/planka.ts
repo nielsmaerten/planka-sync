@@ -63,6 +63,8 @@ export interface User {
   name: string;
   username: string;
   email?: string;
+  /** "admin", "projectOwner" or "boardUser". */
+  role?: string;
 }
 export interface Membership {
   userId: string;

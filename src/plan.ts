@@ -17,6 +17,7 @@ export interface PlanInput {
   base: (key: string) => string | null;
   hasConflict: (path: string) => boolean;
   resolve: Resolve;
+  canEdit: (author: string | undefined) => boolean;
 }
 
 export interface CardPlan {
@@ -25,6 +26,8 @@ export interface CardPlan {
   overwrite: FileSpec[];
   conflicts: FileSpec[];
   unresolved: FileSpec[];
+  /** Another user's comments, edited or removed locally; kept as they are and reported. */
+  blockedComments: FileSpec[];
   ops: Op[];
   /** The card changes list; position is filled in by the ordering pass. */
   moveTo?: string;
@@ -36,6 +39,7 @@ const emptyPlan = (): CardPlan => ({
   overwrite: [],
   conflicts: [],
   unresolved: [],
+  blockedComments: [],
   ops: [],
 });
 
@@ -98,6 +102,7 @@ export function planCard(input: PlanInput): CardPlan {
   plan.pull.push(...comments.pull);
   plan.conflicts.push(...comments.conflicts);
   plan.unresolved.push(...comments.unresolved);
+  plan.blockedComments.push(...comments.blocked);
   plan.ops.push(...comments.ops);
   if (plan.blocked) {
     plan.ops = [];

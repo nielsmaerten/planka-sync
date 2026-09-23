@@ -39,6 +39,21 @@ rm -r main/010-backlog/015-new-card
 "${cli[@]}" sync > sync.log; grep -q "trashed (directory removed)" sync.log; rm sync.log
 ls main/trash | grep -q new-card
 
+echo "== init refuses to re-point a mirror"
+if PLANKA_PASSWORD=admin-password "${cli[@]}" init --server "$PLANKA_TEST_SERVER" --project "Other" --email admin@example.com 2>/dev/null; then
+  echo "init should have refused"; exit 1
+fi
+
+echo "== another user's comment is blocked, not failed"
+mkdir -p "$work/bob" && cd "$work/bob"
+PLANKA_PASSWORD=bob-password-1 "${cli[@]}" init --server "$PLANKA_TEST_SERVER" --project "Sync Test" --email bob@example.com > /dev/null
+printf 'Bob rewrites admin.\n' > main/010-backlog/010-write-the-readme-today/comments/*-admin.md
+"${cli[@]}" sync > sync.log || true
+grep -q "^blocked .*only its author" sync.log; ! grep -q "^failed" sync.log; rm sync.log
+printf 'Bob edits his own.\n' > main/010-backlog/010-write-the-readme-today/comments/*-bob.md
+"${cli[@]}" sync > sync.log || true; grep -q "comment-update" sync.log; rm sync.log
+cd "$work/planka"
+
 echo "== validate flags a broken file"
 printf 'title: [broken\n' > main/010-backlog/020-fix-login-bug/card.yaml
 if "${cli[@]}" validate >/dev/null; then echo "validate should have failed"; exit 1; fi

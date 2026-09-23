@@ -23,6 +23,8 @@ export interface FileSpec {
   id?: string;
   /** The card a description or comment belongs to. */
   cardId?: string;
+  /** Username of a comment's author. */
+  author?: string;
 }
 export interface AttachmentSpec {
   cardId: string;

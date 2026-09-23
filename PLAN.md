@@ -141,16 +141,14 @@ clean, `AGENTS.md` regenerated if its contract changed.
   idempotent run. Found and fixed on the way: files a user added under a directory that gets
   relocated in the same run (canonical rename) were re-uploaded on the next run.
 
-## Open questions
+## Open questions (resolved 23/09/2026)
 
-- Comment filename format (`<date>-<author>.md` proposed); whether comment edits push for the
-  public tool, since Planka refuses edits to other users' comments (rc1 pushed and reported the
-  refusal).
-- Token lifetime: Planka access tokens expire per server config; `login` covers renewal, but
-  whether `sync` should prompt on a TTY when it hits 401.
-- Whether `init` should refuse a non-empty directory or only refuse when it holds a foreign
-  `planka-sync.yaml`.
-- Wizard on a server whose swagger endpoint is closed: fine, the tool needs no spec at runtime.
+- Comment edits stay pushable. An edit or removal of another user's comment (author from the
+  filename, signed-in user from `/api/users/me`, admins exempt) is reported as `blocked` before
+  any API call, with `sync --pull` as the way to restore it.
+- Expired token: `sync` exits 3 and points at `login`; no inline prompt (yagni, Niels).
+- `init` refuses only a directory whose `planka-sync.yaml` names another server or project.
+  Other files in the directory are fine.
 
 ## Needs Niels
 

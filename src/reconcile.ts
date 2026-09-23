@@ -61,6 +61,13 @@ function markConflict(pass: Pass, local: LocalCard, remote: RemoteCard, f: FileS
   pass.run.store.writeBase(f.baseKey, f.content);
 }
 
+function markForeignComment(pass: Pass, local: LocalCard, remote: RemoteCard, f: FileSpec): void {
+  const path = localPath(local, remote, f);
+  const why = `comment by ${f.author}; only its author can change it, run sync --pull to restore it`;
+  pass.run.rec.add("blocked", path, why);
+  keepHandled(pass, path, f);
+}
+
 /** Files the user did not touch still pull; the edited ones wait for the fix. */
 function markBlocked(pass: Pass, { local, remote, plan }: Planned): void {
   pass.run.rec.add("blocked", local.dir, plan.blocked!);
@@ -99,24 +106,28 @@ function planOne(pass: Pass, local: LocalCard, remote: RemoteCard): Planned {
     base: (key) => run.store.readBase(key),
     hasConflict: (path) => run.store.exists(`${path}${CONFLICT_SUFFIX}`),
     resolve: resolver(run.conflicts),
+    canEdit: (author) => run.me.admin || author === run.me.username,
   });
   return { local, remote, plan };
+}
+
+/** Records unresolved and new conflicts, foreign comments and files to overwrite. */
+function markFiles(pass: Pass, { local, remote, plan }: Planned): void {
+  for (const f of plan.unresolved) {
+    const path = localPath(local, remote, f);
+    const why = `unresolved: merge ${path}${CONFLICT_SUFFIX} into it, then delete it`;
+    pass.run.rec.add("conflict", path, why);
+    keepHandled(pass, path, f);
+  }
+  for (const f of plan.conflicts) markConflict(pass, local, remote, f);
+  for (const f of plan.blockedComments) markForeignComment(pass, local, remote, f);
+  for (const f of plan.overwrite) pass.out.overwrite.add(f.path);
 }
 
 async function execute(pass: Pass, planned: Planned): Promise<void> {
   const { run } = pass;
   const { local, remote, plan } = planned;
-  for (const f of plan.unresolved) {
-    const path = localPath(local, remote, f);
-    run.rec.add(
-      "conflict",
-      path,
-      `unresolved: merge ${path}${CONFLICT_SUFFIX} into it, then delete it`,
-    );
-    keepHandled(pass, path, f);
-  }
-  for (const f of plan.conflicts) markConflict(pass, local, remote, f);
-  for (const f of plan.overwrite) pass.out.overwrite.add(f.path);
+  markFiles(pass, planned);
   if (plan.blocked) return markBlocked(pass, planned);
   // Should the re-snapshot fail, the card's files stay known so nothing prunes them.
   for (const f of [remote.card, remote.description, ...remote.comments]) {

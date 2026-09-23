@@ -149,11 +149,24 @@ async function nonInteractiveCredential(server: string, opts: InitOptions): Prom
   return { type: "bearer", token: await login(server, opts.email, password, accept) };
 }
 
+/** A directory already mirroring another server or project must not be re-pointed by accident. */
+function refuseForeign(root: string, server: string, project: string): void {
+  const existing = readConfig(root);
+  if (!existing) return;
+  const sameProject = existing.project === project || existing.projectName === project;
+  if (existing.server === server && sameProject) return;
+  throw new UsageError(
+    `${root} already mirrors "${existing.projectName ?? existing.project}" on ${existing.server}; ` +
+      "use another directory, or remove planka-sync.yaml and .planka-sync/ to start over",
+  );
+}
+
 /** `init --server --project`: the wizard without questions. */
 export async function initNonInteractive(root: string, opts: InitOptions): Promise<Config> {
   if (!opts.server || !opts.project)
     throw new UsageError("usage: planka-sync init --server <url> --project <name-or-id>");
   const server = opts.server.replace(/\/+$/, "");
+  refuseForeign(root, server, opts.project);
   const cred = await nonInteractiveCredential(server, opts);
   const api = new Planka(new Client(server, cred));
   const { projects } = await api.discover();

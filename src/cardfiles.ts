@@ -41,6 +41,7 @@ function commentFiles(ctx: Context, cardId: string, cardDir: string): FileSpec[]
     path: `${cardDir}/${COMMENTS_DIR}/${names.get(c.id)}.md`,
     content: `${c.text.trimEnd()}\n`,
     kind: "comment" as const,
+    author: username(ctx, c.userId),
     baseKey: `cards/${cardId}/comments/${c.id}.md`,
     id: c.id,
     cardId,

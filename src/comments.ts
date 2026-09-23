@@ -11,6 +11,8 @@ export interface CommentPlan {
   pull: FileSpec[];
   conflicts: FileSpec[];
   unresolved: FileSpec[];
+  /** Edits or deletions of another user's comment: refused before any API call. */
+  blocked: FileSpec[];
   ops: Op[];
 }
 
@@ -21,6 +23,8 @@ export interface CommentInput {
   base: (key: string) => string | null;
   hasConflict: (path: string) => boolean;
   resolve: Resolve;
+  /** Whether the signed-in user may change a comment by this author. */
+  canEdit: (author: string | undefined) => boolean;
 }
 
 const nameOf = (f: FileSpec): string => f.path.slice(f.path.lastIndexOf("/") + 1);
@@ -33,20 +37,25 @@ function planExisting(input: CommentInput, f: FileSpec, plan: CommentPlan): void
   const content = local.comments.get(name);
   if (content === undefined) {
     // Produced before and now gone: the user removed it. Never produced: pull it.
-    if (path in previous.files || f.path in previous.files)
-      plan.ops.push({ op: "comment-delete", commentId: f.id! });
-    else plan.pull.push(f);
+    if (!(path in previous.files) && !(f.path in previous.files)) plan.pull.push(f);
+    else change(input, f, plan, { op: "comment-delete", commentId: f.id! });
     return;
   }
   const v = input.resolve(verdict(content, f.content, input.base(f.baseKey)));
   if (v === "pull") plan.pull.push(f);
   else if (v === "conflict") plan.conflicts.push(f);
-  else plan.ops.push({ op: "comment-update", commentId: f.id!, text: content.trimEnd() });
+  else change(input, f, plan, { op: "comment-update", commentId: f.id!, text: content.trimEnd() });
+}
+
+/** A change to a comment goes through only when the signed-in user may change it. */
+function change(input: CommentInput, f: FileSpec, plan: CommentPlan, op: Op): void {
+  if (input.canEdit(f.author)) plan.ops.push(op);
+  else plan.blocked.push(f);
 }
 
 /** Decides per comment file; new local files become comments. */
 export function planComments(input: CommentInput): CommentPlan {
-  const plan: CommentPlan = { pull: [], conflicts: [], unresolved: [], ops: [] };
+  const plan: CommentPlan = { pull: [], conflicts: [], unresolved: [], blocked: [], ops: [] };
   const remoteNames = new Set(input.remote.comments.map(nameOf));
   for (const f of input.remote.comments) planExisting(input, f, plan);
   for (const [name, content] of input.local.comments) {

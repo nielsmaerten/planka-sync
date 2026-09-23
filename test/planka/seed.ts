@@ -112,6 +112,9 @@ async function fillMain(c: Client, b: BoardSetup, bobId: string): Promise<void> 
   await c.patch(`/api/tasks/${t2.id}`, { isCompleted: true, assigneeUserId: bobId });
   await c.post(`/api/cards/${first}/comments`, { text: "First comment" });
   await c.post(`/api/cards/${first}/comments`, { text: "Second comment, same author" });
+  const bobToken = await login(SERVER, "bob@example.com", "bob-password-1", async () => true);
+  const bob = new Client(SERVER, { type: "bearer", token: bobToken });
+  await bob.post(`/api/cards/${first}/comments`, { text: "Bob was here" });
   const form = new FormData();
   form.set("type", "file");
   form.set("name", "Notes File.txt");

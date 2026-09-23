@@ -10,7 +10,8 @@ import type { Config } from "./config.ts";
 import { currentNames, previousCardDirs, previousListDirs } from "./current.ts";
 import type { AttachmentSpec, BoardFiles, CurrentNames, FileSpec } from "./model.ts";
 import { uniqueSlugs } from "./naming.ts";
-import type { Board, Planka, Project } from "./planka.ts";
+import type { Planka } from "./planka.ts";
+import { projectBoards } from "./project.ts";
 import { snapshotBoard } from "./pull.ts";
 import { type BoardOutcome, reconcileBoard } from "./reconcile.ts";
 import { Recorder, type Report } from "./report.ts";
@@ -27,6 +28,8 @@ export interface Run {
   dry: boolean;
   renumber: boolean;
   conflicts: ConflictMode;
+  /** The signed-in user; admins may change anyone's comments. */
+  me: { username: string; admin: boolean };
   /** Bypass the deletion cap. */
   yes: boolean;
   /** Cards trashed so far this run, checked against the deletion cap. */
@@ -232,25 +235,6 @@ async function syncBoardSafely(run: Run, boardId: string, boardDir: string): Pro
   }
 }
 
-export function findProject(projects: Project[], wanted: string): Project {
-  const project = projects.find((p) => p.id === wanted || p.name === wanted);
-  if (!project) {
-    const names = projects.map((p) => `"${p.name}"`).join(", ") || "none";
-    throw new Error(`no visible project matches "${wanted}"; visible: ${names}`);
-  }
-  return project;
-}
-
-/** Boards of one project and the directory each mirrors into. */
-export async function projectBoards(
-  api: Planka,
-  wanted: string,
-): Promise<{ project: Project; boards: Board[] }> {
-  const { projects, boards } = await api.discover();
-  const project = findProject(projects, wanted);
-  return { project, boards: boards.filter((b) => b.projectId === project.id) };
-}
-
 export interface RunOptions {
   dry?: boolean;
   renumber?: boolean;
@@ -271,10 +255,13 @@ export async function runSync(cfg: Config, api: Planka, opts: RunOptions = {}): 
     dry: opts.dry ?? false,
     renumber: opts.renumber ?? false,
     conflicts: opts.conflicts ?? "ask",
+    me: { username: "", admin: false },
     yes: opts.yes ?? false,
     trashed: 0,
     listDirs: new Set(),
   };
+  const me = await api.me();
+  run.me = { username: me.username, admin: me.role === "admin" };
   const { project, boards } = await projectBoards(api, cfg.project);
   const dirs = uniqueSlugs(boards);
   for (const board of boards) await syncBoardSafely(run, board.id, dirs.get(board.id)!);
