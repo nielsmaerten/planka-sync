@@ -1,0 +1,51 @@
+{
+  "name": "planka-sync",
+  "version": "0.1.0",
+  "description": "Mirror a Planka 2 project into a directory and sync it both ways",
+  "keywords": [
+    "agents",
+    "cli",
+    "kanban",
+    "planka",
+    "sync"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nielsmaerten/planka-sync.git"
+  },
+  "bin": {
+    "planka-sync": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "scripts": {
+    "cli": "node --experimental-strip-types src/cli.ts",
+    "build": "tsc -p tsconfig.build.json && chmod +x dist/cli.js",
+    "prepack": "pnpm build",
+    "lint": "oxlint --deny-warnings .",
+    "fmt": "oxfmt .",
+    "fmt:check": "oxfmt --check .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test \"test/**/*.test.ts\"",
+    "planka:up": "docker compose -f test/planka/compose.yaml up -d --wait",
+    "planka:down": "docker compose -f test/planka/compose.yaml down -v",
+    "planka:seed": "node --experimental-strip-types test/planka/seed.ts"
+  },
+  "dependencies": {
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "oxfmt": "^0.66.0",
+    "oxlint": "^1.81.0",
+    "typescript": "^5.9.0"
+  },
+  "engines": {
+    "node": ">=22.6"
+  }
+}

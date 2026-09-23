@@ -1,0 +1,39 @@
+{
+  "rules": {
+    "eslint/complexity": ["error", 8],
+    "eslint/max-depth": ["error", 3],
+    "eslint/max-params": ["error", 4],
+    "eslint/max-nested-callbacks": ["error", 3],
+    "eslint/max-lines-per-function": [
+      "error",
+      {
+        "max": 60,
+        "skipBlankLines": true,
+        "skipComments": true
+      }
+    ],
+    "eslint/max-lines": [
+      "error",
+      {
+        "max": 250,
+        "skipBlankLines": true,
+        "skipComments": true
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": ["**/*.stories.tsx"],
+      "rules": {
+        "eslint/max-lines-per-function": "off"
+      }
+    },
+    {
+      "files": ["**/test/**", "**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts"],
+      "rules": {
+        "eslint/max-lines-per-function": "off",
+        "eslint/max-lines": "off"
+      }
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+# A throwaway Planka 2 for end-to-end checks. `pnpm planka:up` starts it on http://localhost:3999
+# with the admin below; `pnpm planka:down` removes it together with its data.
+services:
+  planka:
+    image: ghcr.io/plankanban/planka:2.0.0
+    ports:
+      - "127.0.0.1:3999:1337"
+    environment:
+      BASE_URL: http://localhost:3999
+      DATABASE_URL: postgresql://postgres@postgres/planka
+      SECRET_KEY: planka-sync-test-secret-not-for-production
+      DEFAULT_ADMIN_EMAIL: admin@example.com
+      DEFAULT_ADMIN_PASSWORD: admin-password
+      DEFAULT_ADMIN_NAME: Test Admin
+      DEFAULT_ADMIN_USERNAME: admin
+    depends_on:
+      postgres:
+        condition: service_healthy
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: planka
+      POSTGRES_HOST_AUTH_METHOD: trust
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d planka"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
