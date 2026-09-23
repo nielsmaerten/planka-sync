@@ -71,6 +71,17 @@ export class Store {
     return existsSync(join(this.root, rel));
   }
 
+  /** Names of the subdirectories of a mirror directory. */
+  listDirs(rel: string): string[] {
+    try {
+      return readdirSync(join(this.root, rel), { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name);
+    } catch {
+      return [];
+    }
+  }
+
   /** Writes the mirror file and its base copy; returns true when the mirror file changed. */
   write(rel: string, content: string, baseKey: string): boolean {
     this.writeBase(baseKey, content);

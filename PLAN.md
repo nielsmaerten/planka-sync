@@ -100,7 +100,7 @@ clean, `AGENTS.md` regenerated if its contract changed.
   attachment upload; new labels and lists; `--renumber`.
 - **Done when:** rc1's slice 3 and 4 regressions pass, cap refusal restores the removed directories.
 
-### Slice 4 — release
+### Slice 4 — release (open)
 
 - README for strangers, `api` verb, `status`, `--version`, CHANGELOG, GitHub Actions (lint, test
   with the Docker Planka), `npm publish` from a tag. First version 0.1.0.
@@ -125,6 +125,21 @@ clean, `AGENTS.md` regenerated if its contract changed.
 - Slice 1 landed 23/09/2026: wizard through a pty, `init`, idempotent second run, list reorder,
   card rename, card move and mid-list insert in Planka relocate directories on disk while a local
   edit survives as `pending`; `validate` flags a planted YAML error and an unknown label.
+
+## Amendments (23/09/2026, slices 2 and 3)
+
+- Landed together: per-file three-way push (description, card.yaml fields, tasks), moves
+  between lists, order pushes from the prefixes (cards and lists; only items that sort
+  differently get a new Planka position, chosen between their neighbours), conflicts as
+  `<file>.conflict` with `--pull` / `--push` deciding them, card creation with the prefix choosing
+  the spot (no prefix: bottom), trash behind the deletion cap with `--yes`, comment create /
+  update / delete, attachment upload, new labels and lists from board.yaml, `--dry-run`,
+  `--json`, `--renumber`, the `api` verb.
+- A list directory renamed to another prefix is recognised by its slug, so renaming
+  `030-done` to `005-done` reorders the list in Planka instead of orphaning its cards.
+- Verified live against the Docker Planka (23/09/2026): every case above, each followed by an
+  idempotent run. Found and fixed on the way: files a user added under a directory that gets
+  relocated in the same run (canonical rename) were re-uploaded on the next run.
 
 ## Open questions
 

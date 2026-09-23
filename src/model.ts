@@ -35,6 +35,8 @@ export interface BoardIndex {
   boardId: string;
   boardDir: string;
   listIdByDir: Map<string, string>;
+  /** Named lists by the slug part of their directory, for directories renamed to another prefix. */
+  listIdBySlug: Map<string, string>;
   /** Dirs of Planka's built-in archive/trash lists; files there are pull-only. */
   builtinDirs: Set<string>;
   labelIdByName: Map<string, string>;
@@ -137,6 +139,10 @@ export function boardYaml(ctx: Context, lists: List[], dirs: Map<string, string>
   );
 }
 
+/** The list a local directory stands for: by exact name, else by slug (prefix renamed). */
+export const resolveListId = (index: BoardIndex, dir: string): string | undefined =>
+  index.listIdByDir.get(dir) ?? index.listIdBySlug.get(parsePrefixed(dir).slug);
+
 export interface BuildOptions {
   current?: CurrentNames;
   /** Ignore the prefixes on disk and number everything from 010 again. */
@@ -205,6 +211,9 @@ function buildIndex(ctx: Context, { boardDir, lists, dirs, cardDirs }: Layout): 
     boardId: ctx.snap.item.id,
     boardDir,
     listIdByDir: new Map(lists.map((l) => [dirs.get(l.id)!, l.id])),
+    listIdBySlug: new Map(
+      lists.filter((l) => l.name !== null).map((l) => [parsePrefixed(dirs.get(l.id)!).slug, l.id]),
+    ),
     builtinDirs: new Set(lists.filter((l) => l.name === null).map((l) => dirs.get(l.id)!)),
     labelIdByName: new Map(labels.map((l) => [l.name, l.id])),
     userIdByName: new Map(users.map((u) => [u.username, u.id])),

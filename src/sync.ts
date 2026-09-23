@@ -4,14 +4,18 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { apiError } from "./api.ts";
+import { reconcileBoardYaml } from "./board.ts";
+import { parseBoardYaml } from "./checks.ts";
 import type { Config } from "./config.ts";
 import { currentNames, previousCardDirs, previousListDirs } from "./current.ts";
-import type { AttachmentSpec, BoardFiles, FileSpec } from "./model.ts";
+import type { AttachmentSpec, BoardFiles, CurrentNames, FileSpec } from "./model.ts";
+import { uniqueSlugs } from "./naming.ts";
 import type { Board, Planka, Project } from "./planka.ts";
 import { snapshotBoard } from "./pull.ts";
+import { type BoardOutcome, reconcileBoard } from "./reconcile.ts";
 import { Recorder, type Report } from "./report.ts";
-import { uniqueSlugs } from "./naming.ts";
 import { type Entry, hash, type Manifest, removeEmptyDirs, Store } from "./state.ts";
+import type { ConflictMode } from "./verdict.ts";
 
 export interface Run {
   cfg: Config;
@@ -22,6 +26,11 @@ export interface Run {
   rec: Recorder;
   dry: boolean;
   renumber: boolean;
+  conflicts: ConflictMode;
+  /** Bypass the deletion cap. */
+  yes: boolean;
+  /** Cards trashed so far this run, checked against the deletion cap. */
+  trashed: number;
   /** List directories to (re)create after pruning, so empty lists stay browsable. */
   listDirs: Set<string>;
 }
@@ -64,6 +73,7 @@ export function pullFile(run: Run, file: FileSpec, force = false): void {
   }
   if (run.dry) {
     if (run.store.readLocal(file.path) !== file.content) run.rec.add("pulled", file.path);
+    else run.rec.unchanged();
     return;
   }
   if (run.store.write(file.path, file.content, file.baseKey)) run.rec.add("pulled", file.path);
@@ -92,38 +102,84 @@ function remapPrevious(run: Run, from: string, to: string): void {
   }
 }
 
+/** Outcome paths under a moved directory follow it. */
+function remapOutcome(out: BoardOutcome, from: string, to: string): void {
+  const under = (p: string) => (p.startsWith(`${from}/`) ? `${to}${p.slice(from.length)}` : p);
+  out.tidy = out.tidy.map(under);
+  for (const [id, dir] of out.dirs) out.dirs.set(id, under(dir));
+}
+
 /** Directories whose canonical name changed (prefix, slug, list) move before the pull. */
-function relocate(run: Run, was: Map<string, string>, now: Map<string, string>): void {
+function relocate(
+  run: Run,
+  was: Map<string, string>,
+  now: Map<string, string>,
+  out: BoardOutcome,
+): void {
   for (const [id, from] of was) {
     const to = now.get(id);
     if (!to || from === to || !run.store.exists(from)) continue;
-    if (run.dry) {
-      run.rec.add("moved", to, `from ${from}`);
-      remapPrevious(run, from, to);
-      continue;
-    }
-    if (run.store.exists(to)) continue; // ponytail: a stray dir at the target wins; reported by validate
-    run.store.move(from, to);
+    // ponytail: a stray directory already at the target wins; validate reports the duplicate.
+    if (!run.dry && run.store.exists(to)) continue;
+    if (!run.dry) run.store.move(from, to);
     remapPrevious(run, from, to);
+    remapOutcome(out, from, to);
     run.rec.add("moved", to, `from ${from}`);
   }
 }
 
-async function pullBoard(run: Run, built: BoardFiles): Promise<void> {
-  for (const file of built.files) pullFile(run, file);
+async function pullBoard(run: Run, built: BoardFiles, out: BoardOutcome): Promise<void> {
+  for (const file of built.files) {
+    if (out.handled.has(file.path)) continue;
+    const force =
+      out.overwrite.has(file.path) ||
+      (file.kind === "board" ? Boolean(out.boardReset) : out.touched.has(file.cardId ?? ""));
+    pullFile(run, file, force);
+  }
   for (const att of built.attachments) await ensureAttachment(run, att);
   for (const dir of built.index.listDirs.values()) run.listDirs.add(dir);
 }
 
+/** A user's new comment or attachment file whose content now lives at its canonical name. */
+function tidy(run: Run, out: BoardOutcome): void {
+  for (const rel of out.tidy) {
+    if (rel in run.next || run.dry || !run.store.exists(rel)) continue;
+    run.store.remove(rel);
+    run.rec.add("pulled", rel, "replaced by its canonical file");
+  }
+}
+
+/** Names on disk, including the directories of cards pushed or created this run. */
+function namesWith(run: Run, boardDir: string, out: BoardOutcome): CurrentNames {
+  const base = currentNames(run.store, run.previous, boardDir);
+  return {
+    listDir: base.listDir,
+    cardDir: (id) => {
+      const dir = out.dirs.get(id);
+      return dir && run.store.exists(dir) ? dir.slice(dir.lastIndexOf("/") + 1) : base.cardDir(id);
+    },
+  };
+}
+
 async function syncBoard(run: Run, boardId: string, boardDir: string): Promise<void> {
-  const current = currentNames(run.store, run.previous, boardDir);
-  const built = await snapshotBoard(run.api, boardId, boardDir, {
-    current,
-    renumber: run.renumber,
-  });
-  relocate(run, previousListDirs(run.store, boardDir), built.index.listDirs);
-  relocate(run, previousCardDirs(run.previous, boardDir), built.index.cardDirs);
-  await pullBoard(run, built);
+  const opts = { current: currentNames(run.store, run.previous, boardDir), renumber: run.renumber };
+  let built = await snapshotBoard(run.api, boardId, boardDir, opts);
+  const boardYamlOutcome = await reconcileBoardYaml(run, built);
+  if (boardYamlOutcome === "created") built = await snapshotBoard(run.api, boardId, boardDir, opts);
+  const boardYaml = parseBoardYaml(built.files[0]!.content)!;
+  const out = await reconcileBoard(run, built, boardYaml);
+  out.boardReset ||= boardYamlOutcome !== "none" && !run.dry;
+  if (out.touched.size > 0 || out.boardReset) {
+    built = await snapshotBoard(run.api, boardId, boardDir, {
+      ...opts,
+      current: namesWith(run, boardDir, out),
+    });
+  }
+  relocate(run, previousListDirs(run.store, boardDir), built.index.listDirs, out);
+  const cardDirs = new Map([...previousCardDirs(run.previous, boardDir), ...out.dirs]);
+  relocate(run, cardDirs, built.index.cardDirs, out);
+  await pullBoard(run, built, out);
+  tidy(run, out);
 }
 
 /** The base copy goes when no produced path still refers to it. */
@@ -198,6 +254,8 @@ export async function projectBoards(
 export interface RunOptions {
   dry?: boolean;
   renumber?: boolean;
+  conflicts?: ConflictMode;
+  yes?: boolean;
 }
 
 export async function runSync(cfg: Config, api: Planka, opts: RunOptions = {}): Promise<Report> {
@@ -212,6 +270,9 @@ export async function runSync(cfg: Config, api: Planka, opts: RunOptions = {}): 
     rec: new Recorder(),
     dry: opts.dry ?? false,
     renumber: opts.renumber ?? false,
+    conflicts: opts.conflicts ?? "ask",
+    yes: opts.yes ?? false,
+    trashed: 0,
     listDirs: new Set(),
   };
   const { project, boards } = await projectBoards(api, cfg.project);

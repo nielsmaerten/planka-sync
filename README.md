@@ -58,8 +58,9 @@ For scripts, the credential can come from the environment instead of the credent
 
 ## Status
 
-Pull, onboarding, validation and the agent contract are in place. Pushing local edits back to
-Planka is the next slice; see [PLAN.md](PLAN.md).
+Two-way sync works: card fields, description, tasks, moves, order, creation, trash, comments,
+attachments, new labels and lists. Not published to npm yet; see [PLAN.md](PLAN.md) for what
+is in and out of scope.
 
 ## Development
 

@@ -9,7 +9,7 @@ import {
   DESCRIPTION_FILE,
   parseCardYaml,
 } from "./card.ts";
-import { type BoardYaml, checkCard, parseBoardYaml } from "./checks.ts";
+import { type BoardYaml, checkCard, findList, parseBoardYaml } from "./checks.ts";
 import { CONFIG_FILE, STATE_DIR } from "./config.ts";
 import { parsePrefixed } from "./naming.ts";
 import { hash, Store } from "./state.ts";
@@ -74,7 +74,7 @@ function checkCardDir(ctx: Ctx, board: BoardYaml, listDir: string, rel: string):
 
 function checkListDir(ctx: Ctx, board: BoardYaml, boardDir: string, listDir: string): void {
   const rel = `${boardDir}/${listDir}`;
-  const list = board.lists.find((l) => l.dir === listDir);
+  const list = findList(board, listDir);
   if (!list) ctx.v.errors.push(`${rel}: not a list of this board (see ${boardDir}/${BOARD_FILE})`);
   const builtin = list !== undefined && list.name === list.type;
   for (const e of entries(join(ctx.store.root, rel))) {

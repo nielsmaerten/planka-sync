@@ -88,9 +88,13 @@ function connect(cfg: Config): Planka {
 async function syncVerb(ctx: Ctx, cfg: Config): Promise<number> {
   const api = connect(cfg);
   writeScaffold(cfg.root);
+  if (ctx.flags.pull && ctx.flags.push)
+    throw new UsageError("--pull and --push exclude each other");
   const report = await runSync(cfg, api, {
     dry: ctx.flags["dry-run"],
     renumber: ctx.flags.renumber,
+    conflicts: ctx.flags.pull ? "pull" : ctx.flags.push ? "push" : "ask",
+    yes: ctx.flags.yes,
   });
   if (!ctx.flags["dry-run"]) new Store(cfg.root).writeJson("last-run.json", report);
   process.stdout.write(

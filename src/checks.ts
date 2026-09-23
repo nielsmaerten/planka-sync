@@ -1,6 +1,7 @@
 // Offline schema checks for card.yaml against its board.yaml.
 import { parse } from "yaml";
 import { CARD_FIELDS, type CardYaml, type TaskGroup, type TaskItem } from "./card.ts";
+import { parsePrefixed } from "./naming.ts";
 
 export interface BoardYaml {
   id: string;
@@ -113,9 +114,17 @@ function checkReferences(meta: CardYaml, board: BoardYaml): string[] {
   ];
 }
 
+/** The board.yaml list a directory stands for: by exact name, else by slug (prefix renamed). */
+export function findList(board: BoardYaml, dir: string): BoardYaml["lists"][number] | undefined {
+  const exact = board.lists.find((l) => l.dir === dir);
+  if (exact) return exact;
+  const slug = parsePrefixed(dir).slug;
+  return board.lists.find((l) => l.name !== l.type && parsePrefixed(l.dir).slug === slug);
+}
+
 /** Errors for one card.yaml; `dir` is the list directory the card sits in. */
 export function checkCard(meta: CardYaml, dir: string, board: BoardYaml): string[] {
-  const list = board.lists.find((l) => l.dir === dir);
+  const list = findList(board, dir);
   const errors: string[] = [];
   if (!list) errors.push(`"${dir}" is not a list directory of this board`);
   else if (meta.id === undefined && list.name === list.type)

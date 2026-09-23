@@ -3,6 +3,7 @@
 import { BOARD_FILE, CARD_FILE } from "./card.ts";
 import { parseBoardYaml } from "./checks.ts";
 import type { CurrentNames } from "./model.ts";
+import { parsePrefixed } from "./naming.ts";
 import type { Manifest, Store } from "./state.ts";
 
 const lastSegment = (path: string): string => path.slice(path.lastIndexOf("/") + 1);
@@ -18,11 +19,21 @@ export function previousCardDirs(previous: Manifest, boardDir: string): Map<stri
   return out;
 }
 
-/** List id → full list dir, from the local board.yaml (unreadable: prefixes start over). */
+/** The directory on disk for a list dir named in board.yaml: itself, or a renamed prefix. */
+function onDisk(store: Store, boardDir: string, dir: string): string | null {
+  if (store.exists(`${boardDir}/${dir}`)) return dir;
+  const slug = parsePrefixed(dir).slug;
+  return store.listDirs(boardDir).find((name) => parsePrefixed(name).slug === slug) ?? null;
+}
+
+/** List id → full list dir on disk, from the local board.yaml (unreadable: prefixes start over). */
 export function previousListDirs(store: Store, boardDir: string): Map<string, string> {
   const out = new Map<string, string>();
   const board = parseBoardYaml(store.readLocal(`${boardDir}/${BOARD_FILE}`) ?? "");
-  for (const l of board?.lists ?? []) if (l.id && l.dir) out.set(l.id, `${boardDir}/${l.dir}`);
+  for (const l of board?.lists ?? []) {
+    const dir = l.id && l.dir ? onDisk(store, boardDir, l.dir) : null;
+    if (dir) out.set(l.id!, `${boardDir}/${dir}`);
+  }
   return out;
 }
 
