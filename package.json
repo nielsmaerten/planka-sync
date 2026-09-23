@@ -22,6 +22,7 @@
     "README.md",
     "LICENSE"
   ],
+  "packageManager": "pnpm@11.9.0",
   "type": "module",
   "scripts": {
     "cli": "node --experimental-strip-types src/cli.ts",
