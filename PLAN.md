@@ -141,6 +141,12 @@ clean, `AGENTS.md` regenerated if its contract changed.
   idempotent run. Found and fixed on the way: files a user added under a directory that gets
   relocated in the same run (canonical rename) were re-uploaded on the next run.
 
+## Amendment (23/09/2026, 0.1.1)
+
+- Moves and order pushes judge three ways against where the last run wrote the card or list.
+  Found while upgrading the katana mirror: its README recorded that the rc1 engine reverted a
+  Planka-side move, and the port had the same gap.
+
 ## Open questions (resolved 23/09/2026)
 
 - Comment edits stay pushable. An edit or removal of another user's comment (author from the

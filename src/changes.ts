@@ -7,6 +7,7 @@ import { metaOps, type Op } from "./diff.ts";
 import type { LocalCard } from "./local.ts";
 import type { FreshCard } from "./ordering.ts";
 import { type Pass, push } from "./reconcile.ts";
+import type { Entry } from "./state.ts";
 import type { RemoteCard } from "./verdict.ts";
 
 /** A remote card whose directory was produced before and is gone now: send it to the trash. */
@@ -88,40 +89,33 @@ async function createCard(pass: Pass, f: FreshCard): Promise<void> {
   const ops = freshOps(pass, local, title);
   if (ops.length > 0) await push(pass, cardId, local.dir, ops);
   else run.rec.add("pushed", local.dir, `created card "${title}"`);
-  await uploadNew(pass, cardId, local, local.dir);
+  await uploadNew(pass, cardId, local);
 }
 
 export async function createCards(pass: Pass, fresh: FreshCard[]): Promise<void> {
   for (const f of fresh) await createCard(pass, f);
 }
 
-/** Local attachment paths no previous run produced: new files to upload. */
+/** Attachment files the last run did not record for this card (by file name): new uploads. */
 function newAttachments(
   local: LocalCard,
-  previous: Record<string, unknown>,
-  remoteDir: string,
+  previous: Record<string, Entry>,
+  cardId: string,
 ): string[] {
+  const known = new Set(
+    Object.entries(previous)
+      .filter(([, e]) => e.kind === "attachment" && e.cardId === cardId)
+      .map(([path]) => path.slice(path.lastIndexOf("/") + 1)),
+  );
   return local.attachments
-    .map(
-      (name) =>
-        [
-          `${local.dir}/${ATTACHMENTS_DIR}/${name}`,
-          `${remoteDir}/${ATTACHMENTS_DIR}/${name}`,
-        ] as const,
-    )
-    .filter(([here, there]) => !(here in previous) && !(there in previous))
-    .map(([here]) => here);
+    .filter((name) => !known.has(name))
+    .map((name) => `${local.dir}/${ATTACHMENTS_DIR}/${name}`);
 }
 
 /** New files in the card's attachments directory go up; the re-pull names them canonically. */
-export async function uploadNew(
-  pass: Pass,
-  cardId: string,
-  local: LocalCard,
-  remoteDir: string,
-): Promise<void> {
+export async function uploadNew(pass: Pass, cardId: string, local: LocalCard): Promise<void> {
   const { run } = pass;
-  for (const rel of newAttachments(local, run.previous.files, remoteDir)) {
+  for (const rel of newAttachments(local, run.previous.files, cardId)) {
     if (run.dry) {
       run.rec.add("pushed", rel, "would upload");
       continue;

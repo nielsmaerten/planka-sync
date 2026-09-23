@@ -18,6 +18,8 @@ export interface PlanInput {
   hasConflict: (path: string) => boolean;
   resolve: Resolve;
   canEdit: (author: string | undefined) => boolean;
+  /** List directory the last run put this card in, null when the run did not know it. */
+  previousListDir: string | null;
 }
 
 export interface CardPlan {
@@ -31,6 +33,8 @@ export interface CardPlan {
   ops: Op[];
   /** The card changes list; position is filled in by the ordering pass. */
   moveTo?: string;
+  /** Planka moved the card and the pull will relocate it: leave it out of local ordering. */
+  pulledMove?: boolean;
   blocked?: string;
 }
 
@@ -72,14 +76,45 @@ function planDescription(input: PlanInput, plan: CardPlan): void {
   plan.ops.push({ op: "update", description: local.description!.trimEnd() });
 }
 
+/** Why a card cannot be moved into this directory, or null when it can. */
+function moveProblem(
+  index: BoardIndex,
+  listDir: string,
+  listId: string | undefined,
+): string | null {
+  if (!listId) return `"${listDir}" is not a list directory of this board`;
+  if (index.builtinDirs.has(listDir))
+    return `cannot be moved into the built-in ${listDir} list from the tree`;
+  return null;
+}
+
+/** Where the card should go given the three lists, or null when nothing is to be pushed. */
+function moveTarget(
+  input: PlanInput,
+  ids: { local: string; remote?: string; previous: string | null },
+): string | null | "conflict" {
+  if (ids.previous !== null && ids.local === ids.previous) return null; // moved in Planka only
+  const bothMoved = ids.previous !== null && ids.remote !== ids.previous;
+  const v = input.resolve(bothMoved ? "conflict" : "push");
+  if (v === "push") return ids.local;
+  return v === "conflict" ? "conflict" : null;
+}
+
+/** Three-way on the list: local vs remote, judged against where the last run put the card. */
 function planMove(input: PlanInput, plan: CardPlan): void {
   const { local, remote, index } = input;
   const listId = resolveListId(index, local.listDir);
-  if (listId === index.listIdByDir.get(remote.listDir)) return;
-  if (!listId) plan.blocked = `"${local.listDir}" is not a list directory of this board`;
-  else if (index.builtinDirs.has(local.listDir))
-    plan.blocked = `cards cannot be moved into the built-in ${local.listDir} list from the tree`;
-  else plan.moveTo = listId;
+  const remoteId = index.listIdByDir.get(remote.listDir);
+  if (listId === remoteId) return;
+  const problem = moveProblem(index, local.listDir, listId);
+  if (problem) return void (plan.blocked = problem);
+  const previousDir = input.previousListDir;
+  const previous = previousDir === null ? null : (resolveListId(index, previousDir) ?? null);
+  const target = moveTarget(input, { local: listId!, remote: remoteId, previous });
+  if (target === "conflict")
+    plan.blocked = `moved on both sides (Planka: ${remote.listDir}); move it there, or sync --push / --pull`;
+  else if (target !== null) plan.moveTo = target;
+  else plan.pulledMove = true;
 }
 
 /** The remote file's place inside the local card directory (which may have moved). */

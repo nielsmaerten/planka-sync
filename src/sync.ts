@@ -4,11 +4,12 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { apiError } from "./api.ts";
+import { pullAttachments } from "./attachments.ts";
 import { reconcileBoardYaml } from "./board.ts";
 import { parseBoardYaml } from "./checks.ts";
 import type { Config } from "./config.ts";
 import { currentNames, previousCardDirs, previousListDirs } from "./current.ts";
-import type { AttachmentSpec, BoardFiles, CurrentNames, FileSpec } from "./model.ts";
+import type { BoardFiles, CurrentNames, FileSpec } from "./model.ts";
 import { uniqueSlugs } from "./naming.ts";
 import type { Planka } from "./planka.ts";
 import { projectBoards } from "./project.ts";
@@ -83,19 +84,6 @@ export function pullFile(run: Run, file: FileSpec, force = false): void {
   else run.rec.unchanged();
 }
 
-async function ensureAttachment(run: Run, att: AttachmentSpec): Promise<void> {
-  run.next[att.path] = { kind: "attachment", hash: null, id: att.id, cardId: att.cardId };
-  if (run.store.exists(att.path)) return run.rec.unchanged();
-  if (run.dry) return run.rec.add("downloaded", att.path);
-  try {
-    run.store.writeLocal(att.path, await run.api.downloadAttachment(att.source));
-    run.rec.add("downloaded", att.path);
-  } catch (err) {
-    run.rec.add("failed", att.path, apiError(err));
-    delete run.next[att.path];
-  }
-}
-
 /** Manifest entries under `from` now describe files under `to`. */
 function remapPrevious(run: Run, from: string, to: string): void {
   for (const [path, entry] of Object.entries(run.previous.files)) {
@@ -112,6 +100,9 @@ function remapOutcome(out: BoardOutcome, from: string, to: string): void {
   for (const [id, dir] of out.dirs) out.dirs.set(id, under(dir));
 }
 
+const movable = (run: Run, out: BoardOutcome, id: string, from: string): boolean =>
+  !out.keep.has(id) && run.store.exists(from);
+
 /** Directories whose canonical name changed (prefix, slug, list) move before the pull. */
 function relocate(
   run: Run,
@@ -121,7 +112,7 @@ function relocate(
 ): void {
   for (const [id, from] of was) {
     const to = now.get(id);
-    if (!to || from === to || !run.store.exists(from)) continue;
+    if (!to || from === to || !movable(run, out, id, from)) continue;
     // ponytail: a stray directory already at the target wins; validate reports the duplicate.
     if (!run.dry && run.store.exists(to)) continue;
     if (!run.dry) run.store.move(from, to);
@@ -139,7 +130,7 @@ async function pullBoard(run: Run, built: BoardFiles, out: BoardOutcome): Promis
       (file.kind === "board" ? Boolean(out.boardReset) : out.touched.has(file.cardId ?? ""));
     pullFile(run, file, force);
   }
-  for (const att of built.attachments) await ensureAttachment(run, att);
+  await pullAttachments(run, built, out);
   for (const dir of built.index.listDirs.values()) run.listDirs.add(dir);
 }
 

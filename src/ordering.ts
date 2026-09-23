@@ -2,8 +2,10 @@
 import { apiError } from "./api.ts";
 import type { LocalCard } from "./local.ts";
 import { byPrefix, type Placed, positionsFor } from "./order.ts";
+import { previousListDirs } from "./current.ts";
 import { resolveListId } from "./model.ts";
-import type { Planned, Pass } from "./reconcile.ts";
+import { parsePrefixed } from "./naming.ts";
+import { listDirOf, type Planned, type Pass } from "./reconcile.ts";
 
 export interface FreshCard {
   local: LocalCard;
@@ -15,7 +17,7 @@ function wantedPerList(pass: Pass, planned: Planned[]): Map<string, (Planned | L
   const perList = new Map<string, (Planned | LocalCard)[]>();
   const add = (listDir: string, item: Planned | LocalCard) =>
     perList.set(listDir, [...(perList.get(listDir) ?? []), item]);
-  for (const p of planned) if (!p.plan.blocked) add(p.local.listDir, p);
+  for (const p of planned) if (!p.plan.blocked && !p.plan.pulledMove) add(p.local.listDir, p);
   for (const f of pass.local.fresh) add(f.listDir, f);
   return perList;
 }
@@ -53,9 +55,24 @@ const unplaceable = (items: (Planned | LocalCard)[]): FreshCard[] =>
     .filter((i): i is LocalCard => !isPlanned(i))
     .map((local) => ({ local, listId: "", position: 0 }));
 
+/** Ids in the order the last run wrote them into this list (by resolved list id). */
+function previousOrder(pass: Pass, listId: string): string[] {
+  const rows: { id: string; order: number | null }[] = [];
+  for (const [id, dir] of pass.previousDirs) {
+    const listDir = listDirOf(dir);
+    if (listDir === null || resolveListId(pass.built.index, listDir) !== listId) continue;
+    rows.push({ id, order: parsePrefixed(dir.slice(dir.lastIndexOf("/") + 1)).order });
+  }
+  return byPrefix(rows).map((r) => r.id);
+}
+
+const sameSequence = (a: string[], b: string[]): boolean =>
+  a.length === b.length && a.every((x, i) => x === b[i]);
+
 /**
  * Fills in `move` ops and `position` ops from the prefixes on disk and decides the position of
- * every fresh card. Returns the fresh cards in creation order.
+ * every fresh card. A list whose local order is what the last run wrote is left alone, so a
+ * reorder made in Planka is pulled, not reverted. Returns the fresh cards in creation order.
  */
 export function orderCards(pass: Pass, planned: Planned[]): FreshCard[] {
   const fresh: FreshCard[] = [];
@@ -69,6 +86,8 @@ export function orderCards(pass: Pass, planned: Planned[]): FreshCard[] {
     const wanted = byPrefix(
       items.map((item) => ({ item, order: isPlanned(item) ? item.local.order : item.order })),
     );
+    const ids = wanted.map((w) => (isPlanned(w.item) ? w.item.remote.id : `fresh:${w.item.dir}`));
+    if (sameSequence(ids, previousOrder(pass, listId))) continue;
     const positions = positionsFor(wanted.map((w) => placed(pass, listId, w.item)));
     applyPositions(
       wanted.map((w) => w.item),
@@ -80,6 +99,16 @@ export function orderCards(pass: Pass, planned: Planned[]): FreshCard[] {
   return fresh;
 }
 
+/** List ids in the order the local board.yaml (written by the last run) lists them. */
+function previousListOrder(pass: Pass): string[] {
+  const { boardDir, builtinDirs } = pass.built.index;
+  const rows = [...previousListDirs(pass.run.store, boardDir)]
+    .map(([id, dir]) => ({ id, name: dir.slice(dir.lastIndexOf("/") + 1) }))
+    .filter(({ name }) => !builtinDirs.has(name))
+    .map(({ id, name }) => ({ id, order: parsePrefixed(name).order }));
+  return byPrefix(rows).map((r) => r.id);
+}
+
 /** List directories renamed to a different prefix order become list position updates. */
 export async function orderLists(pass: Pass): Promise<void> {
   const { run, built } = pass;
@@ -88,6 +117,13 @@ export async function orderLists(pass: Pass): Promise<void> {
     .filter(([dir]) => !builtinDirs.has(dir) && resolveListId(built.index, dir) !== undefined)
     .map(([dir, order]) => ({ id: resolveListId(built.index, dir)!, order }));
   const wanted = byPrefix(known);
+  if (
+    sameSequence(
+      wanted.map((l) => l.id),
+      previousListOrder(pass),
+    )
+  )
+    return;
   const positions = positionsFor(
     wanted.map((l) => ({ id: l.id, remote: listPositions.get(l.id) ?? null })),
   );

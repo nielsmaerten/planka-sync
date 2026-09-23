@@ -2,6 +2,7 @@
 import { apiError } from "./api.ts";
 import { applyOps } from "./apply.ts";
 import { CARD_FILE } from "./card.ts";
+import { previousCardDirs } from "./current.ts";
 import type { BoardYaml } from "./checks.ts";
 import { createCards, trashCards, uploadNew } from "./changes.ts";
 import { describeOps, type Op } from "./diff.ts";
@@ -25,6 +26,8 @@ export interface BoardOutcome {
   tidy: string[];
   /** Files to pull over a local edit (`--pull`). */
   overwrite: Set<string>;
+  /** Blocked cards: their directory stays where it is, nothing of them is pulled. */
+  keep: Set<string>;
   boardReset?: boolean;
 }
 
@@ -34,6 +37,8 @@ export interface Pass {
   board: BoardYaml;
   local: LocalBoard;
   out: BoardOutcome;
+  /** Card id → directory the last run wrote it to. */
+  previousDirs: Map<string, string>;
 }
 
 export interface Planned {
@@ -68,11 +73,24 @@ function markForeignComment(pass: Pass, local: LocalCard, remote: RemoteCard, f:
   keepHandled(pass, path, f);
 }
 
-/** Files the user did not touch still pull; the edited ones wait for the fix. */
+/**
+ * A blocked card is left exactly as it is on disk until the user fixes what was reported. Its
+ * state stays what the last run recorded, so the next run judges the same three-way situation.
+ */
 function markBlocked(pass: Pass, { local, remote, plan }: Planned): void {
-  pass.run.rec.add("blocked", local.dir, plan.blocked!);
+  const { run, out } = pass;
+  run.rec.add("blocked", local.dir, plan.blocked!);
+  out.keep.add(remote.id);
+  const previous = Object.entries(run.previous.files).filter(([, e]) => e.cardId === remote.id);
+  for (const [path, entry] of previous) {
+    out.handled.add(path);
+    run.next[path] = entry;
+  }
   for (const f of [remote.card, remote.description, ...remote.comments]) {
-    if (!plan.pull.includes(f)) keepHandled(pass, localPath(local, remote, f), f);
+    out.handled.add(f.path);
+    const path = localPath(local, remote, f);
+    out.handled.add(path);
+    if (previous.length === 0) run.next[path] = entryOf(f);
   }
 }
 
@@ -95,6 +113,13 @@ export async function push(pass: Pass, cardId: string, dir: string, ops: Op[]): 
   }
 }
 
+/** The list directory segment of a card directory path, or null. */
+export function listDirOf(dir: string | undefined): string | null {
+  if (!dir) return null;
+  const parts = dir.split("/");
+  return parts.length >= 3 ? parts[parts.length - 2]! : null;
+}
+
 function planOne(pass: Pass, local: LocalCard, remote: RemoteCard): Planned {
   const { run } = pass;
   const plan = planCard({
@@ -107,6 +132,7 @@ function planOne(pass: Pass, local: LocalCard, remote: RemoteCard): Planned {
     hasConflict: (path) => run.store.exists(`${path}${CONFLICT_SUFFIX}`),
     resolve: resolver(run.conflicts),
     canEdit: (author) => run.me.admin || author === run.me.username,
+    previousListDir: listDirOf(pass.previousDirs.get(remote.id)),
   });
   return { local, remote, plan };
 }
@@ -135,7 +161,7 @@ async function execute(pass: Pass, planned: Planned): Promise<void> {
     run.next[path] = run.previous.files[path] ?? entryOf(f);
   }
   if (plan.ops.length > 0) await push(pass, remote.id, local.dir, plan.ops);
-  await uploadNew(pass, remote.id, local, remote.dir);
+  await uploadNew(pass, remote.id, local);
 }
 
 /** An unreadable card.yaml: nothing of that card is pulled or pruned this run. */
@@ -143,6 +169,7 @@ function keepInvalid(pass: Pass, id: string, remote: RemoteCard, reason: string)
   const previous = Object.entries(pass.run.previous.files).filter(([, e]) => e.cardId === id);
   const cardYaml = previous.find(([, e]) => e.kind === "card")?.[0] ?? `${remote.dir}/${CARD_FILE}`;
   pass.run.rec.add("error", cardYaml, `${reason}; card left untouched`);
+  pass.out.keep.add(id);
   for (const [path, entry] of previous) {
     pass.out.handled.add(path);
     pass.run.next[path] = entry;
@@ -164,8 +191,16 @@ export async function reconcileBoard(
     dirs: new Map(),
     tidy: [],
     overwrite: new Set(),
+    keep: new Set(),
   };
-  const pass: Pass = { run, built, board, local, out };
+  const pass: Pass = {
+    run,
+    built,
+    board,
+    local,
+    out,
+    previousDirs: previousCardDirs(run.previous, built.index.boardDir),
+  };
   const gone: RemoteCard[] = [];
   const planned: Planned[] = [];
   for (const [id, remote] of groupRemote(built)) {

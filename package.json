@@ -1,6 +1,6 @@
 {
   "name": "planka-sync",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Mirror a Planka 2 project into a directory and sync it both ways",
   "keywords": [
     "agents",
