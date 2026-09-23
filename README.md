@@ -58,9 +58,9 @@ For scripts, the credential can come from the environment instead of the credent
 
 ## Status
 
-Two-way sync works: card fields, description, tasks, moves, order, creation, trash, comments,
-attachments, new labels and lists. Not published to npm yet; see [PLAN.md](PLAN.md) for what
-is in and out of scope.
+Published on npm as `planka-sync`. Two-way sync covers card fields, description, tasks, moves,
+order, creation, trash, comments, attachments, new labels and lists. See [PLAN.md](PLAN.md) for
+what is in and out of scope.
 
 ## Development
 
