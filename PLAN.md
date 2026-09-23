@@ -100,7 +100,7 @@ clean, `AGENTS.md` regenerated if its contract changed.
   attachment upload; new labels and lists; `--renumber`.
 - **Done when:** rc1's slice 3 and 4 regressions pass, cap refusal restores the removed directories.
 
-### Slice 4 — release (open)
+### Slice 4 — release (CI and docs landed 23/09/2026; `npm publish` is Niels's call)
 
 - README for strangers, `api` verb, `status`, `--version`, CHANGELOG, GitHub Actions (lint, test
   with the Docker Planka), `npm publish` from a tag. First version 0.1.0.

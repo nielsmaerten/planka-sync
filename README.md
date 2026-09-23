@@ -67,6 +67,7 @@ is in and out of scope.
 ```sh
 pnpm install
 pnpm planka:up && pnpm planka:seed     # a throwaway Planka 2 in Docker on http://localhost:3999
+pnpm e2e                                # end-to-end check against it (seeds it again)
 pnpm test && pnpm lint && pnpm fmt:check && pnpm typecheck
 pnpm build                              # dist/, what `npx planka-sync` runs
 pnpm planka:down                        # removes the test server and its data
