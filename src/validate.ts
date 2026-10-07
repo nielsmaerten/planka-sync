@@ -10,7 +10,7 @@ import {
   parseCardYaml,
 } from "./card.ts";
 import { type BoardYaml, checkCard, findList, parseBoardYaml } from "./checks.ts";
-import { CONFIG_FILE, STATE_DIR } from "./config.ts";
+import { type BoardFilter, CONFIG_FILE, readConfig, STATE_DIR } from "./config.ts";
 import { parsePrefixed } from "./naming.ts";
 import { hash, Store } from "./state.ts";
 
@@ -30,6 +30,7 @@ const DIR_ENTRIES = new Set([COMMENTS_DIR, ATTACHMENTS_DIR]);
 interface Ctx {
   store: Store;
   v: Validation;
+  boards?: BoardFilter;
 }
 
 const entries = (abs: string): Dirent[] => {
@@ -99,11 +100,25 @@ function checkBoard(ctx: Ctx, boardDir: string): void {
   }
 }
 
+/** Whether the config's board filter leaves this board directory out of the mirror. */
+function excluded(ctx: Ctx, boardDir: string): boolean {
+  if (!ctx.boards) return false;
+  const board = parseBoardYaml(ctx.store.readLocal(`${boardDir}/${BOARD_FILE}`) ?? "");
+  if (!board) return false;
+  const named = ("include" in ctx.boards ? ctx.boards.include : ctx.boards.exclude).some(
+    (w) => w === board.id || w === board.name,
+  );
+  return "include" in ctx.boards ? !named : named;
+}
+
 function checkRoot(ctx: Ctx): void {
   for (const e of entries(ctx.store.root)) {
     if (e.name === STATE_DIR || e.name.startsWith(".git") || ROOT_FILES.has(e.name)) continue;
-    if (e.isDirectory() && ctx.store.exists(`${e.name}/${BOARD_FILE}`)) checkBoard(ctx, e.name);
-    else ctx.v.warnings.push(`${e.name}: not a board directory; ignored by the sync`);
+    if (!e.isDirectory() || !ctx.store.exists(`${e.name}/${BOARD_FILE}`))
+      ctx.v.warnings.push(`${e.name}: not a board directory; ignored by the sync`);
+    else if (excluded(ctx, e.name))
+      ctx.v.warnings.push(`${e.name}: excluded by ${CONFIG_FILE}; ignored by the sync`);
+    else checkBoard(ctx, e.name);
   }
 }
 
@@ -139,7 +154,11 @@ function pendingChanges(ctx: Ctx): void {
 }
 
 export function validateRoot(root: string): Validation {
-  const ctx: Ctx = { store: new Store(root), v: { errors: [], warnings: [], pending: [] } };
+  const ctx: Ctx = {
+    store: new Store(root),
+    v: { errors: [], warnings: [], pending: [] },
+    boards: readConfig(root)?.boards,
+  };
   checkRoot(ctx);
   pendingChanges(ctx);
   return ctx.v;

@@ -6,7 +6,7 @@ import { parseArgs } from "node:util";
 import { ApiError, Client } from "./api.ts";
 import { LoginError } from "./auth.ts";
 import { writeScaffold } from "./agents.ts";
-import { type Config, readConfig, readCredential } from "./config.ts";
+import { type BoardFilter, type Config, readConfig, readCredential } from "./config.ts";
 import { Planka } from "./planka.ts";
 import { isInteractive } from "./prompt.ts";
 import { formatReport, type Report } from "./report.ts";
@@ -110,6 +110,13 @@ function validateVerb(ctx: Ctx): number {
   return v.errors.length > 0 ? 1 : 0;
 }
 
+/** `only "A", "B"` or `all but "C"`, for the status line. */
+function describeFilter(filter: BoardFilter): string {
+  const [mode, names] =
+    "include" in filter ? ["only", filter.include] : ["all but", filter.exclude];
+  return `${mode} ${names.map((n) => `"${n}"`).join(", ")}`;
+}
+
 function statusVerb(ctx: Ctx): number {
   const cfg = requireConfig(ctx.root);
   const v = validateRoot(ctx.root);
@@ -123,6 +130,7 @@ function statusVerb(ctx: Ctx): number {
   }
   console.log(`server:    ${cfg.server}`);
   console.log(`project:   ${cfg.projectName ?? cfg.project} (${cfg.project})`);
+  if (cfg.boards) console.log(`boards:    ${describeFilter(cfg.boards)}`);
   console.log(`signed in: ${signedIn ? "yes" : "no (run `npx planka-sync login`)"}`);
   console.log(`last sync: ${last ? `${last.finishedAt}, ${last.stats.errors} errors` : "never"}`);
   const conflicts = v.errors.filter((e) => e.includes("unresolved conflict")).length;

@@ -39,6 +39,30 @@ rm -r main/010-backlog/015-new-card
 "${cli[@]}" sync > sync.log; grep -q "trashed (directory removed)" sync.log; rm sync.log
 ls main/trash | grep -q new-card
 
+echo "== a filter entry that matches no board is an error"
+printf 'boards:\n  exclude: [Nope]\n' >> planka-sync.yaml
+if "${cli[@]}" sync > sync.log; then echo "sync should have failed"; exit 1; fi
+grep -q '"Nope" is not a board' sync.log; rm sync.log
+sed -i '/^boards:/,$d' planka-sync.yaml
+
+
+echo "== excluding a board keeps its directory but stops syncing it"
+test -f ideas/board.yaml
+printf 'boards:\n  exclude: [Ideas]\n' >> planka-sync.yaml
+"${cli[@]}" sync > sync.log; grep -q "^kept .*ideas .*excluded" sync.log; rm sync.log
+test -f ideas/board.yaml && ! grep -q '"ideas/' .planka-sync/manifest.json
+test ! -e .planka-sync/base/boards/"$(grep '^id' ideas/board.yaml | grep -o '[0-9]*')"
+printf 'Edited while excluded.\n' > ideas/*/*/description.md
+"${cli[@]}" sync > sync.log; ! grep -q "ideas" sync.log; rm sync.log
+"${cli[@]}" validate | grep -q "ideas: excluded by planka-sync.yaml"
+"${cli[@]}" status | grep -q '^boards:    all but "Ideas"'
+
+echo "== re-including the board picks its directory up again; Planka wins over offline edits"
+sed -i '/^boards:/,$d' planka-sync.yaml
+"${cli[@]}" sync > sync.log; ! grep -q "^error" sync.log; grep -q "^pulled .*ideas/.*description.md" sync.log; rm sync.log
+grep -q '"ideas/board.yaml"' .planka-sync/manifest.json
+! grep -q "Edited while excluded" ideas/*/*/description.md
+
 echo "== init refuses to re-point a mirror"
 if PLANKA_PASSWORD=admin-password "${cli[@]}" init --server "$PLANKA_TEST_SERVER" --project "Other" --email admin@example.com 2>/dev/null; then
   echo "init should have refused"; exit 1

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0 (07/10/2026)
+
+- `boards:` in `planka-sync.yaml` with an `include:` or `exclude:` list of board names or ids
+  limits the mirror to some boards of the project. The wizard asks which boards to mirror. A
+  board taken out of the mirror keeps its directory but is no longer synced; `validate` and
+  `status` say so.
+
 ## 0.1.1 (23/09/2026)
 
 - Moves and reorders are now three-way: a card moved or reordered in Planka while the mirror

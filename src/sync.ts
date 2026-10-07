@@ -13,6 +13,7 @@ import type { BoardFiles, CurrentNames, FileSpec } from "./model.ts";
 import { uniqueSlugs } from "./naming.ts";
 import type { Planka } from "./planka.ts";
 import { projectBoards } from "./project.ts";
+import { chooseBoards } from "./select.ts";
 import { snapshotBoard } from "./pull.ts";
 import { type BoardOutcome, reconcileBoard } from "./reconcile.ts";
 import { Recorder, type Report } from "./report.ts";
@@ -253,8 +254,10 @@ export async function runSync(cfg: Config, api: Planka, opts: RunOptions = {}): 
   };
   const me = await api.me();
   run.me = { username: me.username, admin: me.role === "admin" };
-  const { project, boards } = await projectBoards(api, cfg.project);
-  const dirs = uniqueSlugs(boards);
+  const { project, boards: all } = await projectBoards(api, cfg.project);
+  const boards = chooseBoards(run, all);
+  // Directory names come from the whole project, so a filter change never renames a board.
+  const dirs = uniqueSlugs(all);
   for (const board of boards) await syncBoardSafely(run, board.id, dirs.get(board.id)!);
   finish(run);
   return {

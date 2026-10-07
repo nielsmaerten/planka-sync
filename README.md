@@ -56,6 +56,24 @@ not a mirror, 3 not signed in.
 For scripts, the credential can come from the environment instead of the credential file:
 `PLANKA_API_KEY`, `PLANKA_TOKEN` (a bearer token), or `--email` with `PLANKA_PASSWORD`.
 
+## Choosing boards
+
+The wizard asks which boards to mirror when the project has more than one. Later, or for scripts,
+edit `planka-sync.yaml`:
+
+```yaml
+boards:
+  exclude: [Archive, Ideas] # every board but these
+# or
+boards:
+  include: [Main] # only these; names or ids
+```
+
+A board taken out of the mirror keeps its directory, but the sync no longer touches it: nothing
+under it is pushed, pulled, or pruned. Remove the directory yourself when you no longer want it.
+Putting the board back in pulls Planka's state over whatever was edited in the meantime. A name
+that matches no board in the project is reported as an error, so a renamed board shows up.
+
 ## Status
 
 Published on npm as `planka-sync`. Two-way sync covers card fields, description, tasks, moves,

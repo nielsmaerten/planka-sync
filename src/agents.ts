@@ -17,7 +17,7 @@ changes to disk, and prints one line per file it touched. Nothing reaches Planka
 ## Layout
 
 \`\`\`
-${CONFIG_FILE}                       which server and project (safe to commit)
+${CONFIG_FILE}                       which server, project and boards (safe to commit)
 <board>/board.yaml                      lists (dir, name, type, id), labels, members
 <board>/010-<list>/020-<card>/card.yaml       id, title, labels, members, due, dueCompleted, tasks
 <board>/010-<list>/020-<card>/description.md  the card body, plain Markdown

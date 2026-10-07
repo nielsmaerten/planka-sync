@@ -10,6 +10,9 @@ export const STATE_DIR = ".planka-sync";
 export const CREDENTIALS_FILE = "credentials.json";
 export const DEFAULT_DELETION_CAP = 10;
 
+/** Which boards of the project to mirror, by name or id; absent means all of them. */
+export type BoardFilter = { include: string[] } | { exclude: string[] };
+
 export interface Config {
   root: string;
   server: string;
@@ -19,6 +22,7 @@ export interface Config {
   projectName?: string;
   /** Refuse a run that would trash more cards than this. */
   deletionCap: number;
+  boards?: BoardFilter;
 }
 
 interface ConfigFile {
@@ -26,6 +30,35 @@ interface ConfigFile {
   project?: string | number;
   projectName?: string;
   deletionCap?: number;
+  boards?: { include?: unknown; exclude?: unknown } | null;
+}
+
+function names(key: string, raw: unknown): string[] {
+  if (!Array.isArray(raw) || raw.length === 0)
+    throw new Error(
+      `${CONFIG_FILE}: "boards.${key}" must be a non-empty list of board names or ids`,
+    );
+  return raw.map((v) => {
+    if (typeof v !== "string" && typeof v !== "number")
+      throw new Error(
+        `${CONFIG_FILE}: "boards.${key}" holds a value that is not a board name or id`,
+      );
+    return String(v);
+  });
+}
+
+/** `boards:` with exactly one of `include` and `exclude`. */
+export function parseBoardFilter(raw: ConfigFile["boards"]): BoardFilter | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw))
+    throw new Error(`${CONFIG_FILE}: "boards" needs an "include" or "exclude" list`);
+  const hasInclude = raw.include !== undefined;
+  const hasExclude = raw.exclude !== undefined;
+  if (hasInclude === hasExclude)
+    throw new Error(`${CONFIG_FILE}: "boards" needs exactly one of "include" and "exclude"`);
+  return hasInclude
+    ? { include: names("include", raw.include) }
+    : { exclude: names("exclude", raw.exclude) };
 }
 
 export const configPath = (root: string): string => join(root, CONFIG_FILE);
@@ -44,6 +77,7 @@ export function readConfig(root: string): Config | null {
     project: String(raw.project),
     projectName: raw.projectName,
     deletionCap: raw.deletionCap ?? DEFAULT_DELETION_CAP,
+    boards: parseBoardFilter(raw.boards),
   };
 }
 
@@ -53,10 +87,13 @@ export function writeConfig(cfg: Config): void {
     project: cfg.project,
     ...(cfg.projectName ? { projectName: cfg.projectName } : {}),
     ...(cfg.deletionCap !== DEFAULT_DELETION_CAP ? { deletionCap: cfg.deletionCap } : {}),
+    ...(cfg.boards ? { boards: cfg.boards } : {}),
   };
   const header =
     "# planka-sync: which Planka project this directory mirrors. Safe to commit.\n" +
-    "# The credential lives in .planka-sync/ (gitignored); run `npx planka-sync login` to renew it.\n";
+    "# The credential lives in .planka-sync/ (gitignored); run `npx planka-sync login` to renew it.\n" +
+    "# To mirror only some boards, add `boards:` with an `include:` or an `exclude:` list of\n" +
+    "# board names (or ids). A board taken out of the mirror keeps its directory on disk.\n";
   writeFileSync(configPath(cfg.root), header + stringify(doc));
 }
 

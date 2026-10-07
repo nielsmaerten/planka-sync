@@ -3,6 +3,7 @@ import { ApiError, Client, type Credential } from "./api.ts";
 import { login, LoginError, type Terms } from "./auth.ts";
 import { writeScaffold } from "./agents.ts";
 import {
+  type BoardFilter,
   type Config,
   DEFAULT_DELETION_CAP,
   readConfig,
@@ -10,8 +11,8 @@ import {
   writeConfig,
   writeCredential,
 } from "./config.ts";
-import { Planka, type Project } from "./planka.ts";
-import { ask, askSecret, choose, confirm } from "./prompt.ts";
+import { type Board, Planka, type Project } from "./planka.ts";
+import { ask, askSecret, choose, chooseMany, confirm } from "./prompt.ts";
 
 export class UsageError extends Error {}
 
@@ -71,18 +72,32 @@ export async function interactiveLogin(server: string): Promise<Credential> {
   }
 }
 
-async function chooseProject(api: Planka): Promise<Project> {
+async function chooseProject(api: Planka): Promise<{ project: Project; boards: Board[] }> {
   const { projects, boards } = await api.discover();
   if (projects.length === 0) throw new Error("this user sees no projects in Planka");
+  const ofProject = (p: Project) => boards.filter((b) => b.projectId === p.id);
   if (projects.length === 1) {
     console.log(`Mirroring the only visible project: "${projects[0]!.name}".`);
-    return projects[0]!;
+    return { project: projects[0]!, boards: ofProject(projects[0]!) };
   }
   const labels = projects.map((p) => {
-    const n = boards.filter((b) => b.projectId === p.id).length;
+    const n = ofProject(p).length;
     return `${p.name}  (${n} board${n === 1 ? "" : "s"})`;
   });
-  return projects[await choose("Which project should this directory mirror?", labels)]!;
+  const project = projects[await choose("Which project should this directory mirror?", labels)]!;
+  return { project, boards: ofProject(project) };
+}
+
+/** All boards by default; otherwise the picked ones become `boards.include` by name. */
+async function chooseBoardFilter(boards: Board[]): Promise<BoardFilter | undefined> {
+  if (boards.length < 2) return undefined;
+  if (await confirm(`Mirror all ${boards.length} boards?`, true)) return undefined;
+  const picked = await chooseMany(
+    "Which boards should this directory mirror?",
+    boards.map((b) => b.name),
+  );
+  if (picked.length === boards.length) return undefined;
+  return { include: picked.map((i) => boards[i]!.name) };
 }
 
 async function askServer(): Promise<string> {
@@ -99,13 +114,14 @@ export async function wizard(root: string): Promise<Config> {
   const server = await askServer();
   const cred = await interactiveLogin(server);
   const api = new Planka(new Client(server, cred));
-  const project = await chooseProject(api);
+  const { project, boards } = await chooseProject(api);
   const cfg: Config = {
     root,
     server,
     project: project.id,
     projectName: project.name,
     deletionCap: DEFAULT_DELETION_CAP,
+    boards: await chooseBoardFilter(boards),
   };
   writeConfig(cfg);
   writeCredential(root, cred);

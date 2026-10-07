@@ -62,3 +62,31 @@ export async function choose(title: string, options: string[]): Promise<number> 
     if (Number.isInteger(n) && n >= 1 && n <= options.length) return n - 1;
   }
 }
+
+/** Turns `1, 3-4` into zero-based indexes within range, or null when any part is malformed. */
+export function parseSelection(answer: string, count: number): number[] | null {
+  const picked = new Set<number>();
+  for (const part of answer.split(/[\s,]+/).filter(Boolean)) {
+    const m = /^(\d+)(?:-(\d+))?$/.exec(part);
+    if (!m) return null;
+    const from = Number(m[1]);
+    const to = m[2] === undefined ? from : Number(m[2]);
+    if (from < 1 || to > count || from > to) return null;
+    for (let i = from; i <= to; i++) picked.add(i - 1);
+  }
+  return [...picked].sort((a, b) => a - b);
+}
+
+/** Prints numbered options and returns the chosen indexes, at least one, in option order. */
+export async function chooseMany(title: string, options: string[]): Promise<number[]> {
+  console.log(title);
+  options.forEach((o, i) => console.log(`  ${String(i + 1).padStart(2)}. ${o}`));
+  for (;;) {
+    const picked = parseSelection(
+      await ask(`numbers, like 1,3-4 [1-${options.length}]:`),
+      options.length,
+    );
+    if (picked && picked.length > 0) return picked;
+    console.log("Give one or more numbers from the list, separated by commas.");
+  }
+}
