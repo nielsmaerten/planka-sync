@@ -6,13 +6,16 @@ import { parseArgs } from "node:util";
 import { ApiError, Client } from "./api.ts";
 import { LoginError } from "./auth.ts";
 import { writeScaffold } from "./agents.ts";
-import { type BoardFilter, type Config, readConfig, readCredential } from "./config.ts";
+import { type Config, readConfig, readCredential } from "./config.ts";
+import { withLock } from "./lock.ts";
 import { Planka } from "./planka.ts";
 import { isInteractive } from "./prompt.ts";
-import { formatReport, type Report } from "./report.ts";
+import { formatReport } from "./report.ts";
 import { Store } from "./state.ts";
+import { printStatus } from "./status.ts";
 import { runSync } from "./sync.ts";
 import { formatValidation, validateRoot } from "./validate.ts";
+import { watchMirror } from "./watchflags.ts";
 import { initNonInteractive, relogin, UsageError, wizard } from "./wizard.ts";
 
 const VERSION: string = (() => {
@@ -29,6 +32,8 @@ const USAGE = `usage: planka-sync [verb] [flags]
   (no verb)        set up this directory as a mirror (interactive), or sync it
   sync             push local changes, pull Planka's changes
                    --dry-run  --pull  --push  --yes  --renumber  --json
+                   --watch    keep syncing until stopped (Ctrl-C); see AGENTS.md
+                              [--quiet <s>] [--poll <s>] [--full-sync <s>]
   validate         check the tree offline; exit 1 on errors    --json
   status           pending changes, conflicts, last run         --json
   login            sign in again (token expired, other user)
@@ -50,6 +55,10 @@ const OPTIONS = {
   push: { type: "boolean" },
   yes: { type: "boolean" },
   renumber: { type: "boolean" },
+  watch: { type: "boolean" },
+  quiet: { type: "string" },
+  poll: { type: "string" },
+  "full-sync": { type: "string" },
   server: { type: "string" },
   project: { type: "string" },
   email: { type: "string" },
@@ -88,15 +97,21 @@ function connect(cfg: Config): Planka {
 async function syncVerb(ctx: Ctx, cfg: Config): Promise<number> {
   const api = connect(cfg);
   writeScaffold(cfg.root);
+  if (ctx.flags.watch) return watchMirror(cfg, api, ctx.flags);
   if (ctx.flags.pull && ctx.flags.push)
     throw new UsageError("--pull and --push exclude each other");
-  const report = await runSync(cfg, api, {
-    dry: ctx.flags["dry-run"],
-    renumber: ctx.flags.renumber,
-    conflicts: ctx.flags.pull ? "pull" : ctx.flags.push ? "push" : "ask",
-    yes: ctx.flags.yes,
+  const waiting = (pid: number) =>
+    console.error(`waiting for the sync run by pid ${pid} to finish…`);
+  const report = await withLock(cfg.root, waiting, async () => {
+    const r = await runSync(cfg, api, {
+      dry: ctx.flags["dry-run"],
+      renumber: ctx.flags.renumber,
+      conflicts: ctx.flags.pull ? "pull" : ctx.flags.push ? "push" : "ask",
+      yes: ctx.flags.yes,
+    });
+    if (!ctx.flags["dry-run"]) new Store(cfg.root).writeJson("last-run.json", r);
+    return r;
   });
-  if (!ctx.flags["dry-run"]) new Store(cfg.root).writeJson("last-run.json", report);
   process.stdout.write(
     ctx.flags.json ? `${JSON.stringify(report, null, 2)}\n` : formatReport(report),
   );
@@ -110,36 +125,8 @@ function validateVerb(ctx: Ctx): number {
   return v.errors.length > 0 ? 1 : 0;
 }
 
-/** `only "A", "B"` or `all but "C"`, for the status line. */
-function describeFilter(filter: BoardFilter): string {
-  const [mode, names] =
-    "include" in filter ? ["only", filter.include] : ["all but", filter.exclude];
-  return `${mode} ${names.map((n) => `"${n}"`).join(", ")}`;
-}
-
 function statusVerb(ctx: Ctx): number {
-  const cfg = requireConfig(ctx.root);
-  const v = validateRoot(ctx.root);
-  const last = new Store(ctx.root).readJson<Report>("last-run.json");
-  const signedIn = readCredential(ctx.root) !== null;
-  if (ctx.flags.json) {
-    process.stdout.write(
-      `${JSON.stringify({ config: cfg, signedIn, validation: v, lastRun: last }, null, 2)}\n`,
-    );
-    return 0;
-  }
-  console.log(`server:    ${cfg.server}`);
-  console.log(`project:   ${cfg.projectName ?? cfg.project} (${cfg.project})`);
-  if (cfg.boards) console.log(`boards:    ${describeFilter(cfg.boards)}`);
-  console.log(`signed in: ${signedIn ? "yes" : "no (run `npx planka-sync login`)"}`);
-  console.log(`last sync: ${last ? `${last.finishedAt}, ${last.stats.errors} errors` : "never"}`);
-  const conflicts = v.errors.filter((e) => e.includes("unresolved conflict")).length;
-  console.log(
-    `pending:   ${v.pending.length} changes, ${conflicts} conflicts, ${v.errors.length} errors`,
-  );
-  for (const p of v.pending) console.log(`  ${p}`);
-  for (const e of v.errors) console.log(`  error: ${e}`);
-  return 0;
+  return printStatus(requireConfig(ctx.root), ctx.flags.json ?? false);
 }
 
 async function apiVerb(ctx: Ctx): Promise<number> {

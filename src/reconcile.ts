@@ -18,6 +18,8 @@ import { groupRemote, type RemoteCard, resolver } from "./verdict.ts";
 export interface BoardOutcome {
   /** Card ids pushed this run: re-snapshot and force-pull them. */
   touched: Set<string>;
+  /** Pushed cards whose card.yaml was removed while the run went on: nothing of them is pulled. */
+  vanished: Set<string>;
   /** Paths already decided (conflict, blocked, unresolved, invalid): the pull phase skips them. */
   handled: Set<string>;
   /** Local directory of every matched or created card, for relocation to the canonical dir. */
@@ -187,6 +189,7 @@ export async function reconcileBoard(
   const local = scanBoard(run.store, run.previous, built.index);
   const out: BoardOutcome = {
     touched: new Set(),
+    vanished: new Set(),
     handled: new Set(),
     dirs: new Map(),
     tidy: [],

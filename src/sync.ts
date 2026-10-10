@@ -3,7 +3,7 @@
 // are never overwritten: a locally edited file that Planka also changed is reported as pending.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { apiError } from "./api.ts";
+import { ApiError, apiError } from "./api.ts";
 import { pullAttachments } from "./attachments.ts";
 import { reconcileBoardYaml } from "./board.ts";
 import { parseBoardYaml } from "./checks.ts";
@@ -15,9 +15,10 @@ import type { Planka } from "./planka.ts";
 import { projectBoards } from "./project.ts";
 import { chooseBoards } from "./select.ts";
 import { snapshotBoard } from "./pull.ts";
+import { pullMode } from "./pullmode.ts";
 import { type BoardOutcome, reconcileBoard } from "./reconcile.ts";
 import { Recorder, type Report } from "./report.ts";
-import { type Entry, hash, type Manifest, removeEmptyDirs, Store } from "./state.ts";
+import { ancestors, type Entry, hash, type Manifest, removeEmptyDirs, Store } from "./state.ts";
 import type { ConflictMode } from "./verdict.ts";
 
 export interface Run {
@@ -101,8 +102,13 @@ function remapOutcome(out: BoardOutcome, from: string, to: string): void {
   for (const [id, dir] of out.dirs) out.dirs.set(id, under(dir));
 }
 
-const movable = (run: Run, out: BoardOutcome, id: string, from: string): boolean =>
-  !out.keep.has(id) && run.store.exists(from);
+/** Whether `from` can move; a directory removed meanwhile can't, but what was read in it follows. */
+function movable(run: Run, out: BoardOutcome, id: string, [from, to]: [string, string]): boolean {
+  if (out.keep.has(id)) return false;
+  if (run.store.exists(from)) return true;
+  run.store.follow(from, to);
+  return false;
+}
 
 /** Directories whose canonical name changed (prefix, slug, list) move before the pull. */
 function relocate(
@@ -113,7 +119,7 @@ function relocate(
 ): void {
   for (const [id, from] of was) {
     const to = now.get(id);
-    if (!to || from === to || !movable(run, out, id, from)) continue;
+    if (!to || from === to || !movable(run, out, id, [from, to])) continue;
     // ponytail: a stray directory already at the target wins; validate reports the duplicate.
     if (!run.dry && run.store.exists(to)) continue;
     if (!run.dry) run.store.move(from, to);
@@ -126,10 +132,8 @@ function relocate(
 async function pullBoard(run: Run, built: BoardFiles, out: BoardOutcome): Promise<void> {
   for (const file of built.files) {
     if (out.handled.has(file.path)) continue;
-    const force =
-      out.overwrite.has(file.path) ||
-      (file.kind === "board" ? Boolean(out.boardReset) : out.touched.has(file.cardId ?? ""));
-    pullFile(run, file, force);
+    const mode = pullMode(run, out, file);
+    if (mode !== "kept") pullFile(run, file, mode === "force");
   }
   await pullAttachments(run, built, out);
   for (const dir of built.index.listDirs.values()) run.listDirs.add(dir);
@@ -139,6 +143,11 @@ async function pullBoard(run: Run, built: BoardFiles, out: BoardOutcome): Promis
 function tidy(run: Run, out: BoardOutcome): void {
   for (const rel of out.tidy) {
     if (rel in run.next || run.dry || !run.store.exists(rel)) continue;
+    if (run.store.changedSince(rel)) {
+      // Edited after it was pushed: a second copy beats a lost edit (REVIEW.md).
+      run.rec.add("pending", rel, "edited during this sync; the next run posts it again");
+      continue;
+    }
     run.store.remove(rel);
     run.rec.add("pulled", rel, "replaced by its canonical file");
   }
@@ -202,10 +211,26 @@ function prune(run: Run): void {
   }
 }
 
+/**
+ * Directories the cleanup may remove when empty: what the sync produced, plus every list-level
+ * directory of a mirrored board (lists come from board.yaml, never from mkdir, so an empty one
+ * that is not a current list is one Planka deleted). Card-level directories never go: an
+ * emptied one is a card being rewritten (or not yet written), and removing it would read as a
+ * deletion next time. Prune and relocation take away the card directories Planka dropped or
+ * moved.
+ */
+function cleanable(run: Run): Set<string> {
+  const produced = ancestors([...Object.keys(run.previous.files), ...Object.keys(run.next)]);
+  for (const dir of [...produced].filter((d) => !d.includes("/")))
+    for (const list of run.store.listDirs(dir)) produced.add(`${dir}/${list}`);
+  for (const dir of produced) if (dir.split("/").length === 3) produced.delete(dir);
+  return produced;
+}
+
 function finish(run: Run): void {
   prune(run);
   if (run.dry) return;
-  removeEmptyDirs(run.cfg.root, run.listDirs);
+  removeEmptyDirs(run.cfg.root, run.listDirs, cleanable(run));
   for (const dir of run.listDirs) mkdirSync(join(run.cfg.root, dir), { recursive: true });
   run.store.save(run.next);
 }
@@ -221,7 +246,8 @@ async function syncBoardSafely(run: Run, boardId: string, boardDir: string): Pro
   try {
     await syncBoard(run, boardId, boardDir);
   } catch (err) {
-    run.rec.add("error", boardDir, apiError(err));
+    // A request that failed is "failed" like any other; anything else is a bug worth an error.
+    run.rec.add(err instanceof ApiError ? "failed" : "error", boardDir, apiError(err));
     if (process.env.PLANKA_SYNC_DEBUG) console.error((err as Error).stack);
     keepBoard(run, boardDir);
   }

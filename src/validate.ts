@@ -7,10 +7,12 @@ import {
   CARD_FILE,
   COMMENTS_DIR,
   DESCRIPTION_FILE,
+  DRAFT_FILE,
   parseCardYaml,
 } from "./card.ts";
 import { type BoardYaml, checkCard, findList, parseBoardYaml } from "./checks.ts";
 import { type BoardFilter, CONFIG_FILE, readConfig, STATE_DIR } from "./config.ts";
+import { WATCHER_PID_FILE } from "./lock.ts";
 import { parsePrefixed } from "./naming.ts";
 import { hash, Store } from "./state.ts";
 
@@ -23,14 +25,29 @@ export interface Validation {
 }
 
 /** Tool files that live in the root next to the boards. */
-const ROOT_FILES = new Set([CONFIG_FILE, ".gitignore", "AGENTS.md", "README.md", "CLAUDE.md"]);
-const CARD_ENTRIES = new Set([CARD_FILE, DESCRIPTION_FILE, COMMENTS_DIR, ATTACHMENTS_DIR]);
+const ROOT_FILES = new Set([
+  CONFIG_FILE,
+  WATCHER_PID_FILE,
+  ".gitignore",
+  "AGENTS.md",
+  "README.md",
+  "CLAUDE.md",
+]);
+const CARD_ENTRIES = new Set([
+  CARD_FILE,
+  DRAFT_FILE,
+  DESCRIPTION_FILE,
+  COMMENTS_DIR,
+  ATTACHMENTS_DIR,
+]);
 const DIR_ENTRIES = new Set([COMMENTS_DIR, ATTACHMENTS_DIR]);
 
 interface Ctx {
   store: Store;
   v: Validation;
   boards?: BoardFilter;
+  /** card.yaml paths the last sync produced: those directories are cards, never drafts. */
+  synced: Set<string>;
 }
 
 const entries = (abs: string): Dirent[] => {
@@ -66,6 +83,11 @@ function checkCardLayout(ctx: Ctx, rel: string): void {
 function checkCardDir(ctx: Ctx, board: BoardYaml, listDir: string, rel: string): void {
   checkCardLayout(ctx, rel);
   const yaml = ctx.store.readLocal(`${rel}/${CARD_FILE}`);
+  const draft = !ctx.synced.has(`${rel}/${CARD_FILE}`) && ctx.store.exists(`${rel}/${DRAFT_FILE}`);
+  if (yaml === null && draft)
+    return void ctx.v.warnings.push(
+      `${rel}: draft, not synced; rename ${DRAFT_FILE} to ${CARD_FILE} when it is ready`,
+    );
   if (yaml === null) return void ctx.v.errors.push(`${rel}/${CARD_FILE}: missing`);
   const meta = parseCardYaml(yaml);
   if (typeof meta === "string") return void ctx.v.errors.push(`${rel}/${CARD_FILE}: ${meta}`);
@@ -154,10 +176,12 @@ function pendingChanges(ctx: Ctx): void {
 }
 
 export function validateRoot(root: string): Validation {
+  const store = new Store(root);
   const ctx: Ctx = {
-    store: new Store(root),
+    store,
     v: { errors: [], warnings: [], pending: [] },
     boards: readConfig(root)?.boards,
+    synced: new Set(Object.keys(store.load().files).filter((p) => p.endsWith(`/${CARD_FILE}`))),
   };
   checkRoot(ctx);
   pendingChanges(ctx);

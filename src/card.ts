@@ -32,6 +32,8 @@ export const CARD_FIELDS = new Set([
 ]);
 
 export const CARD_FILE = "card.yaml";
+/** A new card in the making: invisible to the sync until renamed to card.yaml. */
+export const DRAFT_FILE = "card.yaml.draft";
 export const DESCRIPTION_FILE = "description.md";
 export const COMMENTS_DIR = "comments";
 export const ATTACHMENTS_DIR = "attachments";

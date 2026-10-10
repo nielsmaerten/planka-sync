@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { parseBoardFilter, readConfig, writeConfig } from "../src/config.ts";
+import { DEFAULT_WATCH, parseBoardFilter, readConfig, writeConfig } from "../src/config.ts";
 import { selectBoards } from "../src/project.ts";
 import { parseSelection } from "../src/prompt.ts";
 
@@ -60,7 +60,13 @@ test("parseBoardFilter accepts one list and rejects the rest", () => {
 test("config round-trips the board filter and omits it when absent", () => {
   const root = mkdtempSync(join(tmpdir(), "planka-sync-"));
   try {
-    const base = { root, server: "https://p.example", project: "7", deletionCap: 10 };
+    const base = {
+      root,
+      server: "https://p.example",
+      project: "7",
+      deletionCap: 10,
+      watch: DEFAULT_WATCH,
+    };
     writeConfig(base);
     assert.equal(readConfig(root)?.boards, undefined);
     assert.doesNotMatch(readFileSync(join(root, "planka-sync.yaml"), "utf8"), /^boards:/m);

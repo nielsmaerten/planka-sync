@@ -44,6 +44,7 @@ gap runs out. See the generated `AGENTS.md` for the full editing rules.
 | --------------------------------------------- | -------------------------------------------------------------- |
 | `npx planka-sync`                             | set up this directory (interactive), or sync it                |
 | `npx planka-sync sync`                        | push local changes, pull Planka's; `--dry-run`, `--json`       |
+| `npx planka-sync --watch`                     | keep syncing until stopped (see below)                         |
 | `npx planka-sync validate`                    | check the tree offline, list pending changes; exit 1 on errors |
 | `npx planka-sync status`                      | server, project, pending changes, conflicts, last run          |
 | `npx planka-sync login`                       | sign in again                                                  |
@@ -55,6 +56,30 @@ not a mirror, 3 not signed in.
 
 For scripts, the credential can come from the environment instead of the credential file:
 `PLANKA_API_KEY`, `PLANKA_TOKEN` (a bearer token), or `--email` with `PLANKA_PASSWORD`.
+
+## Watch mode
+
+`npx planka-sync --watch` keeps the directory in sync until you stop it (Ctrl-C or SIGTERM). It
+runs in the foreground and logs one line per sync; put it in tmux, behind `&`, or in a systemd
+user unit to keep it running.
+
+- Local edits are pushed once nothing has been written for `quiet` seconds.
+- Planka is polled every `poll` seconds with one request per board; a change starts a sync.
+- A full sync runs every `fullSync` seconds for what the poll cannot see, such as edited
+  comments and new boards.
+
+```yaml
+watch: # in planka-sync.yaml; these are the defaults
+  quiet: 5 # at least 1
+  poll: 10 # at least 2
+  fullSync: 300 # at least 30, and at least poll
+```
+
+`--quiet`, `--poll` and `--full-sync` override them for one run. While it runs, the watcher
+keeps its pid in `.planka-watcher.pid` (gitignored), so agents and scripts can tell that the
+directory syncs itself; `npx planka-sync status` shows it too. A sync started by hand waits for
+the watcher's current pass. The watcher retries when Planka is unreachable and exits with code 3
+when its credential stops working.
 
 ## Choosing boards
 
