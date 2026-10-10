@@ -70,7 +70,7 @@ moment (see "Title" and "Find a card by id" below).
 - **Title:** the directory name follows the title, so a title change renames the directory on
   the next sync. Make a title change your last edit to a card.
 - **Find a card by id:** after any sync, find a card by its \`id\` (for example
-  \`grep -rl '^id: "<id>"' <board>\`), not by a path you remember. Writing to an old path
+  \`grep -rl --include=card.yaml '<id>' <board>\`), not by a path you remember. Writing to an old path
   creates a stray directory without \`card.yaml\`; \`validate\` reports it as an error and the
   sync ignores it.
 - **Move:** move the card directory into another list directory of the same board.
