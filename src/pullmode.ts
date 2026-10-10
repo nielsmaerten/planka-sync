@@ -1,48 +1,41 @@
 // How the pull phase treats one remote file: pull it, force it over a local edit, or keep a
-// local edit that was made while this run went on.
+// change someone made while this run went on. One rule for all of them: a sync pass never
+// overwrites or removes local state that changed since the pass read it (`Store.changedSince`).
 import { carryAdditions } from "./board.ts";
 import type { FileSpec } from "./model.ts";
 import type { BoardOutcome } from "./reconcile.ts";
 import { entryOf, type Run } from "./sync.ts";
 
-/** What a pushed card's file held when this run read it; undefined when it was not read. */
-function scannedContent(out: BoardOutcome, file: FileSpec): string | null | undefined {
-  const local = out.scanned.get(file.cardId ?? "");
-  if (!local) return undefined;
-  if (file.kind === "card") return local.cardYaml;
-  if (file.kind === "description") return local.description;
-  return local.comments.get(file.path.slice(file.path.lastIndexOf("/") + 1));
-}
-
-/**
- * A pushed card's file that someone wrote or removed while this run went on (the watcher syncs
- * while agents keep editing): force-pulling Planka's copy would undo that. Keep the disk as it
- * is, with Planka's copy as base and manifest entry, so the next run pushes the edit or removal.
- */
-function keptNewerEdit(run: Run, out: BoardOutcome, file: FileSpec): boolean {
-  const before = scannedContent(out, file);
-  const now = run.store.readLocal(file.path);
-  if (before === undefined || now === before) return false;
+/** Keeps the disk as it is, with Planka's copy as base and manifest entry: pushed next run. */
+function keep(run: Run, file: FileSpec, detail: string): void {
   run.next[file.path] = entryOf(file);
   if (!run.dry) run.store.writeBase(file.baseKey, file.content);
-  if (file.kind === "card" && now === null) out.vanished.add(file.cardId!);
-  const what = now === null ? "removed" : "edited";
-  run.rec.add("pending", file.path, `${what} during this sync; pushed next time`);
+  run.rec.add("pending", file.path, detail);
+}
+
+/** A pushed card's file written or removed since the pass read it keeps that change. */
+function keptCardFile(run: Run, out: BoardOutcome, file: FileSpec): boolean {
+  if (!run.store.changedSince(file.path)) return false;
+  const removed = run.store.readLocal(file.path) === null;
+  // Downloading its attachments would recreate a directory someone just removed.
+  if (removed && file.kind === "card") out.vanished.add(file.cardId!);
+  keep(run, file, `${removed ? "removed" : "edited"} during this sync; pushed next time`);
   return true;
 }
 
-/** board.yaml after pushed additions: entries appended meanwhile survive on top of Planka's. */
-function keptBoardAdditions(run: Run, out: BoardOutcome, file: FileSpec): boolean {
+/**
+ * board.yaml changed since the pass read it, while its additions were pushed: Planka's copy plus
+ * the entries appended meanwhile. Keeping the whole local file would not do: it lacks the ids
+ * Planka just assigned, so the next run would reset it.
+ */
+function keptBoardAdditions(run: Run, file: FileSpec): boolean {
+  if (!run.store.changedSince(file.path)) return false;
   const now = run.store.readLocal(file.path);
-  if (out.scannedBoard === undefined || now === null || now === out.scannedBoard) return false;
-  const merged = carryAdditions(file.content, out.scannedBoard, now);
+  const merged =
+    now === null ? null : carryAdditions(file.content, run.store.seenContent(file.path)!, now);
   if (merged === null) return false;
-  run.next[file.path] = entryOf(file);
-  if (!run.dry) {
-    run.store.writeBase(file.baseKey, file.content);
-    run.store.writeLocal(file.path, merged);
-  }
-  run.rec.add("pending", file.path, "additions made during this sync; pushed next time");
+  keep(run, file, "additions made during this sync; pushed next time");
+  if (!run.dry) run.store.writeLocal(file.path, merged);
   return true;
 }
 
@@ -50,8 +43,8 @@ export function pullMode(run: Run, out: BoardOutcome, file: FileSpec): "pull" | 
   if (out.overwrite.has(file.path)) return "force";
   if (file.kind === "board") {
     if (!out.boardReset) return "pull";
-    return keptBoardAdditions(run, out, file) ? "kept" : "force";
+    return keptBoardAdditions(run, file) ? "kept" : "force";
   }
   if (!out.touched.has(file.cardId ?? "")) return "pull";
-  return keptNewerEdit(run, out, file) ? "kept" : "force";
+  return keptCardFile(run, out, file) ? "kept" : "force";
 }

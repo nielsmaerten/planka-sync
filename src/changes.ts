@@ -92,11 +92,14 @@ function withId(yaml: string, cardId: string): string {
  * is added to it) and, differing from what was pushed, is kept by the pull and pushed next run.
  */
 function recordId(pass: Pass, local: LocalCard, cardId: string): void {
+  const { store } = pass.run;
   const path = `${local.dir}/${CARD_FILE}`;
-  const now = pass.run.store.readLocal(path) ?? local.cardYaml;
   const pushed = withId(local.cardYaml, cardId);
-  pass.run.store.writeLocal(path, now === local.cardYaml ? pushed : withId(now, cardId));
-  pass.out.scanned.set(cardId, { ...local, cardYaml: pushed });
+  const now = store.changedSince(path) ? store.readLocal(path) : null;
+  if (now === null) return void store.writeLocal(path, pushed);
+  store.writeLocal(path, withId(now, cardId));
+  // What was pushed, so the pull sees the newer edit and keeps it.
+  store.markSeen(path, pushed);
 }
 
 /** A card directory without an id: create the card, then push its extras against an empty card. */

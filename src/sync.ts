@@ -102,8 +102,13 @@ function remapOutcome(out: BoardOutcome, from: string, to: string): void {
   for (const [id, dir] of out.dirs) out.dirs.set(id, under(dir));
 }
 
-const movable = (run: Run, out: BoardOutcome, id: string, from: string): boolean =>
-  !out.keep.has(id) && run.store.exists(from);
+/** Whether `from` can move; a directory removed meanwhile can't, but what was read in it follows. */
+function movable(run: Run, out: BoardOutcome, id: string, [from, to]: [string, string]): boolean {
+  if (out.keep.has(id)) return false;
+  if (run.store.exists(from)) return true;
+  run.store.follow(from, to);
+  return false;
+}
 
 /** Directories whose canonical name changed (prefix, slug, list) move before the pull. */
 function relocate(
@@ -114,7 +119,7 @@ function relocate(
 ): void {
   for (const [id, from] of was) {
     const to = now.get(id);
-    if (!to || from === to || !movable(run, out, id, from)) continue;
+    if (!to || from === to || !movable(run, out, id, [from, to])) continue;
     // ponytail: a stray directory already at the target wins; validate reports the duplicate.
     if (!run.dry && run.store.exists(to)) continue;
     if (!run.dry) run.store.move(from, to);
@@ -138,6 +143,11 @@ async function pullBoard(run: Run, built: BoardFiles, out: BoardOutcome): Promis
 function tidy(run: Run, out: BoardOutcome): void {
   for (const rel of out.tidy) {
     if (rel in run.next || run.dry || !run.store.exists(rel)) continue;
+    if (run.store.changedSince(rel)) {
+      // Edited after it was pushed: a second copy beats a lost edit (REVIEW.md).
+      run.rec.add("pending", rel, "edited during this sync; the next run posts it again");
+      continue;
+    }
     run.store.remove(rel);
     run.rec.add("pulled", rel, "replaced by its canonical file");
   }
@@ -158,13 +168,11 @@ function namesWith(run: Run, boardDir: string, out: BoardOutcome): CurrentNames 
 async function syncBoard(run: Run, boardId: string, boardDir: string): Promise<void> {
   const opts = { current: currentNames(run.store, run.previous, boardDir), renumber: run.renumber };
   let built = await snapshotBoard(run.api, boardId, boardDir, opts);
-  const scannedBoard = run.store.readLocal(built.files[0]!.path);
   const boardYamlOutcome = await reconcileBoardYaml(run, built);
   if (boardYamlOutcome === "created") built = await snapshotBoard(run.api, boardId, boardDir, opts);
   const boardYaml = parseBoardYaml(built.files[0]!.content)!;
   const out = await reconcileBoard(run, built, boardYaml);
   out.boardReset ||= boardYamlOutcome !== "none" && !run.dry;
-  out.scannedBoard = scannedBoard;
   if (out.touched.size > 0 || out.boardReset) {
     built = await snapshotBoard(run.api, boardId, boardDir, {
       ...opts,
