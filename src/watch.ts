@@ -4,7 +4,7 @@
 import { type FSWatcher, watch as watchFs } from "node:fs";
 import { ApiError, apiError } from "./api.ts";
 import type { Config, WatchTimings } from "./config.ts";
-import { isForeign, type MirrorState, mirrorState, relevant, toMirrorPath } from "./foreign.ts";
+import { isForeign, type MirrorState, mirrorState, relevant } from "./foreign.ts";
 import {
   acquireLock,
   claimPidFile,
@@ -148,11 +148,9 @@ export class Watcher {
     then();
   }
 
-  /** Buffers every event: a pass can add boards, so filtering waits for the state after it. */
   private onEvent(name: string | null): void {
-    const rel = name === null ? "" : toMirrorPath(name);
-    if (rel !== "" && !this.running && !relevant(this.state, rel)) return;
-    this.buffer.add(rel);
+    if (name !== null && !relevant(this.state, name)) return;
+    this.buffer.add(name ?? "");
     this.scheduleFlush(200);
   }
 
@@ -172,9 +170,7 @@ export class Watcher {
     const paths = [...this.buffer];
     this.buffer.clear();
     // An empty name means the event did not say which path: assume a change.
-    const foreign = (rel: string) =>
-      relevant(this.state, rel) && isForeign(this.store, this.state, rel);
-    if (paths.some((rel) => rel === "" || foreign(rel))) this.quiet();
+    if (paths.some((rel) => rel === "" || isForeign(this.store, this.state, rel))) this.quiet();
   }
 
   private quiet(): void {

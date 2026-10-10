@@ -11,7 +11,7 @@ import {
   watchTimings,
   writeConfig,
 } from "../src/config.ts";
-import { isForeign, mirrorState, relevant, toMirrorPath } from "../src/foreign.ts";
+import { isForeign, mirrorState, relevant } from "../src/foreign.ts";
 import { claimPidFile, liveHolder, releasePidFile, withLock } from "../src/lock.ts";
 import type { Snapshot } from "../src/planka.ts";
 import { hash, Store } from "../src/state.ts";
@@ -202,14 +202,6 @@ test("a stale pid file is left alone while another process is taking it over", a
     live.kill();
     rmSync(root, { recursive: true });
   }
-});
-
-test("event names are compared in the manifest's forward-slash form", () => {
-  assert.equal(
-    toMirrorPath("main\\010-todo\\010-a\\card.yaml", "\\"),
-    "main/010-todo/010-a/card.yaml",
-  );
-  assert.equal(toMirrorPath("main/010-todo", "/"), "main/010-todo");
 });
 
 test("a pass with failed requests is retried with backoff", async () => {

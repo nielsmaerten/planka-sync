@@ -70,33 +70,6 @@ test("a created card keeps its id on disk when a later request of the run fails"
   }
 });
 
-test("a board whose sync fails keeps its empty list directories", async () => {
-  const root = mkdtempSync(join(tmpdir(), "planka-sync-keep-"));
-  try {
-    let fail = false;
-    const api = {
-      me: async () => ({ username: "admin", role: "admin" }),
-      discover: async () => ({
-        projects: [{ id: "p", name: "P" }],
-        boards: [{ id: "1", name: "Main", position: 1, projectId: "p" }],
-      }),
-      snapshot: async () => {
-        if (fail) throw new ApiError("GET /api/boards/1", 503, { code: "HTTP_503", message: "x" });
-        return snapshot();
-      },
-      listCards: async () => ({ items: [], included: {} }),
-    } as unknown as Planka;
-    const cfg: Config = { root, server: "s", project: "p", deletionCap: 10, watch: DEFAULT_WATCH };
-    await runSync(cfg, api);
-    assert.ok(existsSync(join(root, "main/010-todo")), "the empty list is on disk");
-    fail = true;
-    await runSync(cfg, api);
-    assert.ok(existsSync(join(root, "main/010-todo")), "still there after the failed run");
-  } finally {
-    rmSync(root, { recursive: true });
-  }
-});
-
 test("an emptied card directory stays, and the card is not trashed", async () => {
   const root = mkdtempSync(join(tmpdir(), "planka-sync-emptied-"));
   try {

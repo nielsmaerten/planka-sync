@@ -2,7 +2,7 @@
 // the path no longer matches what the last sync left there: someone else wrote it. The watcher's
 // own writes, and writes that changed nothing, match the manifest and are dropped.
 import { statSync } from "node:fs";
-import { dirname, join, sep } from "node:path";
+import { dirname, join } from "node:path";
 import { parseBoardYaml } from "./checks.ts";
 import { CONFLICT_SUFFIX } from "./validate.ts";
 import { ancestors, hash, type Manifest, type Store } from "./state.ts";
@@ -29,10 +29,6 @@ export function mirrorState(store: Store): MirrorState {
   }
   return { files, boardDirs, knownDirs };
 }
-
-/** An fs.watch name in the manifest's form: forward slashes, also on Windows. */
-export const toMirrorPath = (name: string, separator: string = sep): string =>
-  name.split(separator).join("/");
 
 /** Event paths the watcher considers at all: under a mirrored board, not a temp file. */
 export function relevant(state: MirrorState, rel: string): boolean {

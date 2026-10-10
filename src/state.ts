@@ -12,7 +12,7 @@ import {
   rmdirSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, sep } from "node:path";
+import { dirname, join } from "node:path";
 import { STATE_DIR } from "./config.ts";
 
 export type Kind = "board" | "card" | "description" | "comment" | "attachment";
@@ -156,8 +156,8 @@ export function ancestors(paths: Iterable<string>): Set<string> {
 }
 
 /**
- * Removes empty directories under root, bottom-up: only ones the sync produced (`produced`, in
- * forward-slash form), never the listed ones or the state dir. A directory someone just made
+ * Removes empty directories under root, bottom-up: only ones the sync produced (`produced`),
+ * never the listed ones or the state dir. A directory someone just made
  * for a new card stays, empty or not.
  */
 export function removeEmptyDirs(root: string, keep: Set<string>, produced: Set<string>): void {
@@ -167,8 +167,7 @@ export function removeEmptyDirs(root: string, keep: Set<string>, produced: Set<s
     .filter((rel) => !rel.startsWith(STATE_DIR) && !rel.startsWith(".git"))
     .sort((a, b) => b.length - a.length);
   for (const rel of dirs) {
-    const key = rel.split(sep).join("/");
-    if (keep.has(key) || !produced.has(key) || readdirSync(join(root, rel)).length > 0) continue;
+    if (keep.has(rel) || !produced.has(rel) || readdirSync(join(root, rel)).length > 0) continue;
     rmdirSync(join(root, rel));
   }
 }
