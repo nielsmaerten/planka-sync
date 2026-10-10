@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -73,6 +73,8 @@ test("a pid file is claimed once, and a dead holder's file is replaced", async (
     assert.equal(claimPidFile(path), null);
     releasePidFile(path);
     assert.equal(liveHolder(path), null);
+    assert.equal(claimPidFile(path), null);
+    assert.deepEqual(readdirSync(root), ["x.pid"], "no temp or guard files left behind");
   } finally {
     rmSync(root, { recursive: true });
   }
@@ -238,6 +240,36 @@ test("a pass with failed requests is retried with backoff", async () => {
       lines.some((l) => l.includes("retrying in 0.1s")),
       "backoff doubles",
     );
+  } finally {
+    rmSync(root, { recursive: true });
+  }
+});
+
+test("of processes claiming one pid file at the same instant, exactly one wins", async () => {
+  const root = tempRoot();
+  try {
+    const lock = new URL("../src/lock.ts", import.meta.url).href;
+    const path = join(root, "race.pid");
+    const at = Date.now() + 1000;
+    const script =
+      `import { claimPidFile } from ${JSON.stringify(lock)};` +
+      `while (Date.now() < ${at});` +
+      `console.log(claimPidFile(${JSON.stringify(path)}) === null ? "won" : "lost");` +
+      "setTimeout(() => {}, 1500);";
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () => {
+        const child = spawn(process.execPath, [
+          "--experimental-strip-types",
+          "--input-type=module",
+          "-e",
+          script,
+        ]);
+        let out = "";
+        child.stdout.on("data", (d) => (out += d));
+        return new Promise<string>((r) => child.once("exit", () => r(out.trim())));
+      }),
+    );
+    assert.equal(results.filter((r) => r === "won").length, 1, results.join(","));
   } finally {
     rmSync(root, { recursive: true });
   }

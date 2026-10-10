@@ -1,6 +1,6 @@
 // Pid files: the sync lock under .planka-sync/ that every sync run holds, and the watcher's pid
 // file at the mirror root that tells agents the mirror is synced automatically.
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { STATE_DIR, type WatchTimings } from "./config.ts";
 
@@ -34,16 +34,32 @@ export function readPid(path: string): number | null {
 }
 
 /**
+ * Creates `path` holding this process's pid, or returns false when it already exists. The pid is
+ * written to a temp file that is then hard-linked into place, so the file never exists empty: a
+ * process that reads it in between would otherwise take it for stale.
+ */
+function createPidFile(path: string): boolean {
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, `${process.pid}\n`);
+  try {
+    linkSync(tmp, path);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    return false;
+  } finally {
+    rmSync(tmp, { force: true });
+  }
+}
+
+/**
  * Removes a stale pid file under a short-lived takeover guard, and only if it still names the
  * pid that was found dead: two processes that both saw the stale file must not remove each
  * other's fresh one.
  */
 function removeStale(path: string, stale: number | null): void {
   const guard = `${path}.takeover`;
-  try {
-    writeFileSync(guard, `${process.pid}\n`, { flag: "wx" });
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+  if (!createPidFile(guard)) {
     // Someone else is taking over; a guard left by a process that died meanwhile is cleared.
     if (liveHolder(guard) === null) rmSync(guard, { force: true });
     return;
@@ -64,12 +80,7 @@ export function claimPidFile(path: string): number | null {
   mkdirSync(dirname(path), { recursive: true });
   // Three rounds: clear a dead takeover guard, remove the stale file, create ours.
   for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      writeFileSync(path, `${process.pid}\n`, { flag: "wx" });
-      return null;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-    }
+    if (createPidFile(path)) return null;
     const holder = readPid(path);
     if (holder !== null && holder !== process.pid && isAlive(holder)) return holder;
     removeStale(path, holder);
