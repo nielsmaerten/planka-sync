@@ -52,6 +52,7 @@ code=0; "${cli[@]}" sync --watch --dry-run > /dev/null 2>&1 || code=$?
 test "$code" = 2
 "${cli[@]}" status | grep -q "^watcher:   running (pid $watcher): pushes 2s after the last write"
 "${cli[@]}" status --json | json ".watcher.timings.fullSync" | grep -qx 30
+! "${cli[@]}" validate | grep -q "planka-watcher.pid"
 grep -qx '/.planka-watcher.pid' .gitignore
 
 echo "== a local edit reaches Planka after the quiet period"
@@ -59,6 +60,9 @@ card=main/010-backlog/010-write-the-readme
 id=$(grep '^id' "$card/card.yaml" | grep -o '[0-9]*')
 printf 'Edited while watching.\n' > "$card/description.md"
 until_ok 15 in_planka "Edited while watching"
+# The pass re-snapshots after pushing, so its own push is not mistaken for a remote change.
+sleep 5
+! grep -qE '^[0-9:]{8}  remote ' watch.log || { echo "own push polled as remote"; exit 1; }
 
 echo "== a change in Planka lands on disk through the poll"
 "${cli[@]}" api PATCH "/api/cards/$id" '{"description":"Edited in Planka.\n"}' > /dev/null

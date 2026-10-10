@@ -12,6 +12,7 @@ import {
 } from "./card.ts";
 import { type BoardYaml, checkCard, findList, parseBoardYaml } from "./checks.ts";
 import { type BoardFilter, CONFIG_FILE, readConfig, STATE_DIR } from "./config.ts";
+import { WATCHER_PID_FILE } from "./lock.ts";
 import { parsePrefixed } from "./naming.ts";
 import { hash, Store } from "./state.ts";
 
@@ -24,7 +25,14 @@ export interface Validation {
 }
 
 /** Tool files that live in the root next to the boards. */
-const ROOT_FILES = new Set([CONFIG_FILE, ".gitignore", "AGENTS.md", "README.md", "CLAUDE.md"]);
+const ROOT_FILES = new Set([
+  CONFIG_FILE,
+  WATCHER_PID_FILE,
+  ".gitignore",
+  "AGENTS.md",
+  "README.md",
+  "CLAUDE.md",
+]);
 const CARD_ENTRIES = new Set([
   CARD_FILE,
   DRAFT_FILE,
