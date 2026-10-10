@@ -202,11 +202,22 @@ function prune(run: Run): void {
   }
 }
 
+/**
+ * Directories the cleanup may remove when empty: what the sync produced, plus every list-level
+ * directory of a mirrored board (lists come from board.yaml, never from mkdir, so an empty one
+ * that is not a current list is one Planka deleted). Card-level directories people make stay.
+ */
+function cleanable(run: Run): Set<string> {
+  const produced = ancestors([...Object.keys(run.previous.files), ...Object.keys(run.next)]);
+  for (const dir of [...produced].filter((d) => !d.includes("/")))
+    for (const list of run.store.listDirs(dir)) produced.add(`${dir}/${list}`);
+  return produced;
+}
+
 function finish(run: Run): void {
   prune(run);
   if (run.dry) return;
-  const produced = ancestors([...Object.keys(run.previous.files), ...Object.keys(run.next)]);
-  removeEmptyDirs(run.cfg.root, run.listDirs, produced);
+  removeEmptyDirs(run.cfg.root, run.listDirs, cleanable(run));
   for (const dir of run.listDirs) mkdirSync(join(run.cfg.root, dir), { recursive: true });
   run.store.save(run.next);
 }

@@ -78,6 +78,12 @@ mkdir "$list/new-card" && printf 'title: Born in a new list\n' > "$list/new-card
 until_ok 15 compgen -G "$list/*-born-in-a-new-list/card.yaml" > /dev/null
 grep -q '^id' "$list"/*-born-in-a-new-list/card.yaml
 
+echo "== an empty list deleted in Planka loses its directory"
+empty=$("${cli[@]}" api POST "/api/boards/$board/lists" '{"name":"Brief","type":"active","position":1999999}' | json ".item.id")
+until_ok 15 compgen -G 'main/*-brief' > /dev/null
+"${cli[@]}" api DELETE "/api/lists/$empty" > /dev/null
+until_ok 15 bash -c '! compgen -G "main/*-brief" > /dev/null'
+
 echo "== a conflict is written once and the watcher stays idle"
 printf 'Local side.\n' > "$card/description.md"
 "${cli[@]}" api PATCH "/api/cards/$id" '{"description":"Remote side.\n"}' > /dev/null
