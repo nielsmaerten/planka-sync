@@ -15,7 +15,8 @@ import { isForeign, mirrorState, relevant, toMirrorPath } from "../src/foreign.t
 import { claimPidFile, liveHolder, releasePidFile, withLock } from "../src/lock.ts";
 import type { Snapshot } from "../src/planka.ts";
 import { hash, Store } from "../src/state.ts";
-import { fingerprint, timingsFrom, Watcher } from "../src/watch.ts";
+import { fingerprint, Watcher } from "../src/watch.ts";
+import { timingsFrom } from "../src/watchflags.ts";
 import { ApiError } from "../src/api.ts";
 import type { Planka } from "../src/planka.ts";
 
@@ -270,6 +271,40 @@ test("of processes claiming one pid file at the same instant, exactly one wins",
       }),
     );
     assert.equal(results.filter((r) => r === "won").length, 1, results.join(","));
+  } finally {
+    rmSync(root, { recursive: true });
+  }
+});
+
+test("a credential revoked during a pass ends the watcher at the retry with the 401", async () => {
+  const root = tempRoot();
+  try {
+    let meCalls = 0;
+    const unauthorized = () =>
+      new ApiError("GET /api/x", 401, { code: "E_UNAUTHORIZED", message: "revoked" });
+    const api = {
+      me: async () => {
+        if (++meCalls > 1) throw unauthorized();
+        return { username: "admin", role: "admin" };
+      },
+      discover: async () => ({
+        projects: [{ id: "p", name: "P" }],
+        boards: [{ id: "1", name: "Main", position: 1, projectId: "p" }],
+      }),
+      snapshot: async () => {
+        throw unauthorized();
+      },
+    } as unknown as Planka;
+    const cfg: Config = { root, server: "s", project: "p", deletionCap: 10, watch: DEFAULT_WATCH };
+    const lines: string[] = [];
+    const watcher = new Watcher(cfg, api, { quiet: 1, poll: 0.05, fullSync: 30 }, (l) =>
+      lines.push(l),
+    );
+    const started = Date.now();
+    await assert.rejects(watcher.run(), (err: unknown) => (err as ApiError).status === 401);
+    assert.ok(Date.now() - started < 1000, "within one poll interval of backoff");
+    assert.ok(lines.some((l) => l.includes("1 requests failed; retrying in 0.05s")));
+    assert.equal(liveHolder(join(root, ".planka-watcher.pid")), null, "pid file released");
   } finally {
     rmSync(root, { recursive: true });
   }

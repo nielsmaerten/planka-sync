@@ -15,7 +15,7 @@ import { Store } from "./state.ts";
 import { printStatus } from "./status.ts";
 import { runSync } from "./sync.ts";
 import { formatValidation, validateRoot } from "./validate.ts";
-import { watchMirror } from "./watch.ts";
+import { watchMirror } from "./watchflags.ts";
 import { initNonInteractive, relogin, UsageError, wizard } from "./wizard.ts";
 
 const VERSION: string = (() => {

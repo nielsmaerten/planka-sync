@@ -3,7 +3,7 @@
 // pass runs periodically for what the poll cannot see (comment edits, new boards).
 import { type FSWatcher, watch as watchFs } from "node:fs";
 import { ApiError, apiError } from "./api.ts";
-import { type Config, type WatchTimings, watchTimings } from "./config.ts";
+import type { Config, WatchTimings } from "./config.ts";
 import { isForeign, type MirrorState, mirrorState, relevant, toMirrorPath } from "./foreign.ts";
 import {
   acquireLock,
@@ -58,6 +58,8 @@ export class Watcher {
   private captured = new Map<string, string>();
   private readonly buffer = new Set<string>();
   private running = false;
+  /** Set once the watcher stops: nothing may be scheduled after that. */
+  private stopped = false;
   private polling = false;
   private pollFailing = false;
   private failures = 0;
@@ -128,6 +130,7 @@ export class Watcher {
   }
 
   private stop(then: () => void): void {
+    this.stopped = true;
     for (const t of [this.quietTimer, this.flushTimer, this.fullTimer, this.retryTimer])
       if (t) clearTimeout(t);
     if (this.pollTimer) clearInterval(this.pollTimer);
@@ -144,6 +147,7 @@ export class Watcher {
   }
 
   private scheduleFlush(ms: number): void {
+    if (this.stopped) return;
     if (this.flushTimer) clearTimeout(this.flushTimer);
     this.flushTimer = setTimeout(() => this.flush(), ms);
   }
@@ -162,6 +166,7 @@ export class Watcher {
   }
 
   private quiet(): void {
+    if (this.stopped) return;
     if (this.quietTimer) clearTimeout(this.quietTimer);
     this.quietTimer = setTimeout(() => {
       this.quietTimer = null;
@@ -171,6 +176,7 @@ export class Watcher {
 
   /** Asks for a pass; it waits for a running pass and for local writes to go quiet. */
   private request(reason: string): void {
+    if (this.stopped) return;
     this.wanted ??= reason;
     if (this.running || this.quietTimer || this.retryTimer) return;
     void this.pass();
@@ -190,11 +196,16 @@ export class Watcher {
       this.failed(err);
     } finally {
       this.running = false;
-      this.state = mirrorState(this.store);
-      this.scheduleFull();
-      if (this.buffer.size > 0) this.scheduleFlush(200);
-      if (this.wanted && !this.quietTimer && !this.retryTimer) void this.pass();
+      if (!this.stopped) this.afterPass();
     }
+  }
+
+  /** Fresh mirror state, the next full sync, events from during the pass, a pass asked for. */
+  private afterPass(): void {
+    this.state = mirrorState(this.store);
+    this.scheduleFull();
+    if (this.buffer.size > 0) this.scheduleFlush(200);
+    if (this.wanted && !this.quietTimer && !this.retryTimer) void this.pass();
   }
 
   private async syncOnce(reason: string): Promise<Report> {
@@ -225,6 +236,7 @@ export class Watcher {
   }
 
   private scheduleFull(): void {
+    if (this.stopped) return;
     if (this.fullTimer) clearTimeout(this.fullTimer);
     this.fullTimer = setTimeout(() => this.request("full"), this.timings.fullSync * 1000);
   }
@@ -257,38 +269,4 @@ export class Watcher {
     if (!failing && this.pollFailing) this.log(`${clock()}  poll    reachable again`);
     this.pollFailing = failing;
   }
-}
-
-/** Flags that make no sense for a run nobody watches. */
-const NOT_WITH_WATCH = ["dry-run", "pull", "push", "yes", "renumber", "json"] as const;
-const TIMING_FLAGS = { quiet: "quiet", poll: "poll", fullSync: "full-sync" } as const;
-
-type WatchFlags = Partial<
-  Record<
-    (typeof NOT_WITH_WATCH)[number] | (typeof TIMING_FLAGS)[keyof WatchTimings],
-    string | boolean
-  >
->;
-
-/** The config's timings, with `--quiet`, `--poll` and `--full-sync` overriding them. */
-export function timingsFrom(cfg: Config, flags: WatchFlags): WatchTimings {
-  const raw: Partial<Record<keyof WatchTimings, unknown>> = {};
-  for (const [key, flag] of Object.entries(TIMING_FLAGS) as [keyof WatchTimings, string][]) {
-    const v = flags[flag as keyof WatchFlags];
-    if (typeof v === "string") raw[key] = v.trim() === "" ? Number.NaN : Number(v);
-  }
-  const timings = watchTimings(cfg.watch, raw);
-  if (typeof timings === "string")
-    throw new UsageError(
-      `--${TIMING_FLAGS[timings.split(" ")[0] as keyof WatchTimings]}: ${timings}`,
-    );
-  return timings;
-}
-
-/** `--watch`: refuses one-shot flags, then runs the watcher. */
-export function watchMirror(cfg: Config, api: Planka, flags: WatchFlags): Promise<number> {
-  const bad = NOT_WITH_WATCH.filter((f) => flags[f]);
-  if (bad.length > 0)
-    throw new UsageError(`--watch does not combine with ${bad.map((f) => `--${f}`).join(", ")}`);
-  return new Watcher(cfg, api, timingsFrom(cfg, flags)).run();
 }
