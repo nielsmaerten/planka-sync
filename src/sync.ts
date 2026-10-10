@@ -204,12 +204,14 @@ function prune(run: Run): void {
 
 /**
  * Directories the cleanup may remove when empty: what the sync produced, plus every list-level
- * directory of a mirrored board (lists come from board.yaml, never from mkdir, so an empty one
- * that is not a current list is one Planka deleted). Card-level directories people make stay.
+ * directory of a board pulled this run (lists come from board.yaml, never from mkdir, so an
+ * empty one that is not a current list is one Planka deleted). A board whose sync failed is left
+ * as it was; card-level directories people make stay.
  */
 function cleanable(run: Run): Set<string> {
   const produced = ancestors([...Object.keys(run.previous.files), ...Object.keys(run.next)]);
-  for (const dir of [...produced].filter((d) => !d.includes("/")))
+  const pulled = new Set([...run.listDirs].map((d) => d.slice(0, d.indexOf("/"))));
+  for (const dir of pulled)
     for (const list of run.store.listDirs(dir)) produced.add(`${dir}/${list}`);
   return produced;
 }
