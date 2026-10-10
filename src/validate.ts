@@ -10,6 +10,7 @@ import {
   DRAFT_FILE,
   parseCardYaml,
 } from "./card.ts";
+import { agentsMdProblem } from "./agents.ts";
 import { type BoardYaml, checkCard, findList, parseBoardYaml } from "./checks.ts";
 import { type BoardFilter, CONFIG_FILE, readConfig, STATE_DIR } from "./config.ts";
 import { WATCHER_PID_FILE } from "./lock.ts";
@@ -183,6 +184,8 @@ export function validateRoot(root: string): Validation {
     boards: readConfig(root)?.boards,
     synced: new Set(Object.keys(store.load().files).filter((p) => p.endsWith(`/${CARD_FILE}`))),
   };
+  const problem = agentsMdProblem(store.readLocal("AGENTS.md") ?? "");
+  if (problem) ctx.v.warnings.push(`AGENTS.md: ${problem}; the sync leaves the file alone`);
   checkRoot(ctx);
   pendingChanges(ctx);
   return ctx.v;
