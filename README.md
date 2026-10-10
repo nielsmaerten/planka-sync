@@ -116,6 +116,10 @@ pnpm build                              # dist/, what `npx planka-sync` runs
 pnpm planka:down                        # removes the test server and its data
 ```
 
+Releasing: bump `version` in `package.json`, date the CHANGELOG entry, merge, then push a tag
+`v<version>`. GitHub Actions runs the checks and, after approval in the `npm` environment,
+publishes to npm with provenance (`.github/workflows/publish.yml`).
+
 The seeded admin is `admin@example.com` / `admin-password` on the test server only.
 
 ## License
