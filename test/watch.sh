@@ -13,7 +13,7 @@ cleanup() {
   rm -rf "$work"
 }
 trap cleanup EXIT
-trap 'echo "failed at line $LINENO"' ERR
+trap 'echo "failed at line $LINENO"; tail -15 "$work/planka/watch.log" 2>/dev/null' ERR
 
 pnpm -s planka:seed
 mkdir -p "$work/planka" && cd "$work/planka"
@@ -115,7 +115,8 @@ comment=$("${cli[@]}" api POST "/api/cards/$id/comments" '{"text":"Fresh comment
 until_ok 15 bash -c 'grep -lq "Fresh comment." '"$card"'/comments/*.md'
 "${cli[@]}" api PATCH "/api/comments/$comment" '{"text":"Edited comment."}' > /dev/null
 until_ok 45 bash -c 'grep -lq "Edited comment." '"$card"'/comments/*.md'
-grep -qE '^[0-9:]{8}  full ' watch.log
+# A pass logs its line when it ends, which can be just after the file it wrote shows up.
+until_ok 10 grep -qE '^[0-9:]{8}  full ' watch.log
 
 echo "== an idle watcher writes nothing"
 sleep 3
