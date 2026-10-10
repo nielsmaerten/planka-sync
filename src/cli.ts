@@ -7,12 +7,14 @@ import { ApiError, Client } from "./api.ts";
 import { LoginError } from "./auth.ts";
 import { writeScaffold } from "./agents.ts";
 import { type BoardFilter, type Config, readConfig, readCredential } from "./config.ts";
+import { withLock } from "./lock.ts";
 import { Planka } from "./planka.ts";
 import { isInteractive } from "./prompt.ts";
 import { formatReport, type Report } from "./report.ts";
 import { Store } from "./state.ts";
 import { runSync } from "./sync.ts";
 import { formatValidation, validateRoot } from "./validate.ts";
+import { watchMirror } from "./watch.ts";
 import { initNonInteractive, relogin, UsageError, wizard } from "./wizard.ts";
 
 const VERSION: string = (() => {
@@ -29,6 +31,8 @@ const USAGE = `usage: planka-sync [verb] [flags]
   (no verb)        set up this directory as a mirror (interactive), or sync it
   sync             push local changes, pull Planka's changes
                    --dry-run  --pull  --push  --yes  --renumber  --json
+                   --watch    keep syncing until stopped (Ctrl-C); see AGENTS.md
+                              [--quiet <s>] [--poll <s>] [--full-sync <s>]
   validate         check the tree offline; exit 1 on errors    --json
   status           pending changes, conflicts, last run         --json
   login            sign in again (token expired, other user)
@@ -50,6 +54,10 @@ const OPTIONS = {
   push: { type: "boolean" },
   yes: { type: "boolean" },
   renumber: { type: "boolean" },
+  watch: { type: "boolean" },
+  quiet: { type: "string" },
+  poll: { type: "string" },
+  "full-sync": { type: "string" },
   server: { type: "string" },
   project: { type: "string" },
   email: { type: "string" },
@@ -88,15 +96,21 @@ function connect(cfg: Config): Planka {
 async function syncVerb(ctx: Ctx, cfg: Config): Promise<number> {
   const api = connect(cfg);
   writeScaffold(cfg.root);
+  if (ctx.flags.watch) return watchMirror(cfg, api, ctx.flags);
   if (ctx.flags.pull && ctx.flags.push)
     throw new UsageError("--pull and --push exclude each other");
-  const report = await runSync(cfg, api, {
-    dry: ctx.flags["dry-run"],
-    renumber: ctx.flags.renumber,
-    conflicts: ctx.flags.pull ? "pull" : ctx.flags.push ? "push" : "ask",
-    yes: ctx.flags.yes,
+  const waiting = (pid: number) =>
+    console.error(`waiting for the sync run by pid ${pid} to finish…`);
+  const report = await withLock(cfg.root, waiting, async () => {
+    const r = await runSync(cfg, api, {
+      dry: ctx.flags["dry-run"],
+      renumber: ctx.flags.renumber,
+      conflicts: ctx.flags.pull ? "pull" : ctx.flags.push ? "push" : "ask",
+      yes: ctx.flags.yes,
+    });
+    if (!ctx.flags["dry-run"]) new Store(cfg.root).writeJson("last-run.json", r);
+    return r;
   });
-  if (!ctx.flags["dry-run"]) new Store(cfg.root).writeJson("last-run.json", report);
   process.stdout.write(
     ctx.flags.json ? `${JSON.stringify(report, null, 2)}\n` : formatReport(report),
   );

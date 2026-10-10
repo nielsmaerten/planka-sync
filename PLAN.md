@@ -185,13 +185,14 @@ Reverses "one-shot only, no daemon, watcher or lock" from 23/09/2026. Target ver
 
   ```yaml
   watch:
-    quiet: 5      # seconds without local writes before a push   (--quiet,     min 1)
-    poll: 10      # seconds between cheap polls                  (--poll,      min 2)
+    quiet: 5 # seconds without local writes before a push   (--quiet,     min 1)
+    poll: 10 # seconds between cheap polls                  (--poll,      min 2)
     fullSync: 300 # seconds between full syncs                   (--full-sync, min 30, >= poll)
   ```
 
   Values below the minimums are config errors (exit 2), so a typo can't flood a shared server.
   The watcher reads the config once at start, so a change needs a restart.
+
 - **`.planka-watcher.pid`** at the mirror root holds the watcher's pid. It means "this mirror is
   being synced automatically". Written on start, removed on clean exit. A stale file (`kill -0`
   fails) counts as no watcher and gets replaced. A live one makes a second `--watch` exit 2. The

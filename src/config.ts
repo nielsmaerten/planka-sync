@@ -10,6 +10,33 @@ export const STATE_DIR = ".planka-sync";
 export const CREDENTIALS_FILE = "credentials.json";
 export const DEFAULT_DELETION_CAP = 10;
 
+/** Seconds the watcher waits: local quiet period, between polls, between full syncs. */
+export interface WatchTimings {
+  quiet: number;
+  poll: number;
+  fullSync: number;
+}
+export const DEFAULT_WATCH: WatchTimings = { quiet: 5, poll: 10, fullSync: 300 };
+/** Floors, so that a typo cannot turn the watcher into a load test of a shared server. */
+export const WATCH_MIN: WatchTimings = { quiet: 1, poll: 2, fullSync: 30 };
+
+/** Defaults overlaid with the given values; returns the problem instead when one is invalid. */
+export function watchTimings(
+  base: WatchTimings,
+  raw: Partial<Record<keyof WatchTimings, unknown>>,
+): WatchTimings | string {
+  const out = { ...base };
+  for (const key of Object.keys(DEFAULT_WATCH) as (keyof WatchTimings)[]) {
+    const v = raw[key];
+    if (v === undefined || v === null) continue;
+    if (typeof v !== "number" || !Number.isFinite(v) || v < WATCH_MIN[key])
+      return `${key} must be a number of seconds, at least ${WATCH_MIN[key]}`;
+    out[key] = v;
+  }
+  if (out.fullSync < out.poll) return "fullSync must be at least poll";
+  return out;
+}
+
 /** Which boards of the project to mirror, by name or id; absent means all of them. */
 export type BoardFilter = { include: string[] } | { exclude: string[] };
 
@@ -23,6 +50,7 @@ export interface Config {
   /** Refuse a run that would trash more cards than this. */
   deletionCap: number;
   boards?: BoardFilter;
+  watch: WatchTimings;
 }
 
 interface ConfigFile {
@@ -31,6 +59,7 @@ interface ConfigFile {
   projectName?: string;
   deletionCap?: number;
   boards?: { include?: unknown; exclude?: unknown } | null;
+  watch?: Partial<Record<keyof WatchTimings, unknown>> | null;
 }
 
 function names(key: string, raw: unknown): string[] {
@@ -78,7 +107,16 @@ export function readConfig(root: string): Config | null {
     projectName: raw.projectName,
     deletionCap: raw.deletionCap ?? DEFAULT_DELETION_CAP,
     boards: parseBoardFilter(raw.boards),
+    watch: parseWatch(raw.watch),
   };
+}
+
+function parseWatch(raw: ConfigFile["watch"]): WatchTimings {
+  if (raw !== undefined && raw !== null && (typeof raw !== "object" || Array.isArray(raw)))
+    throw new Error(`${CONFIG_FILE}: "watch" holds quiet, poll and fullSync in seconds`);
+  const timings = watchTimings(DEFAULT_WATCH, raw ?? {});
+  if (typeof timings === "string") throw new Error(`${CONFIG_FILE}: watch.${timings}`);
+  return timings;
 }
 
 export function writeConfig(cfg: Config): void {
@@ -88,6 +126,7 @@ export function writeConfig(cfg: Config): void {
     ...(cfg.projectName ? { projectName: cfg.projectName } : {}),
     ...(cfg.deletionCap !== DEFAULT_DELETION_CAP ? { deletionCap: cfg.deletionCap } : {}),
     ...(cfg.boards ? { boards: cfg.boards } : {}),
+    ...(JSON.stringify(cfg.watch) !== JSON.stringify(DEFAULT_WATCH) ? { watch: cfg.watch } : {}),
   };
   const header =
     "# planka-sync: which Planka project this directory mirrors. Safe to commit.\n" +

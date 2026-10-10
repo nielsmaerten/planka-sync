@@ -6,6 +6,7 @@ import {
   type BoardFilter,
   type Config,
   DEFAULT_DELETION_CAP,
+  DEFAULT_WATCH,
   readConfig,
   readCredential,
   writeConfig,
@@ -121,6 +122,7 @@ export async function wizard(root: string): Promise<Config> {
     project: project.id,
     projectName: project.name,
     deletionCap: DEFAULT_DELETION_CAP,
+    watch: DEFAULT_WATCH,
     boards: await chooseBoardFilter(boards),
   };
   writeConfig(cfg);
@@ -197,6 +199,7 @@ export async function initNonInteractive(root: string, opts: InitOptions): Promi
     project: match.id,
     projectName: match.name,
     deletionCap: DEFAULT_DELETION_CAP,
+    watch: DEFAULT_WATCH,
   };
   writeConfig(cfg);
   writeCredential(root, cred);

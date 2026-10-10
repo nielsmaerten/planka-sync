@@ -1,0 +1,172 @@
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import {
+  type Config,
+  DEFAULT_WATCH,
+  readConfig,
+  watchTimings,
+  writeConfig,
+} from "../src/config.ts";
+import { isForeign, mirrorState, relevant } from "../src/foreign.ts";
+import { claimPidFile, liveHolder, releasePidFile, withLock } from "../src/lock.ts";
+import type { Snapshot } from "../src/planka.ts";
+import { hash, Store } from "../src/state.ts";
+import { fingerprint, timingsFrom } from "../src/watch.ts";
+
+function tempRoot(): string {
+  return mkdtempSync(join(tmpdir(), "planka-sync-watch-"));
+}
+
+test("watchTimings overlays values and enforces the floors", () => {
+  assert.deepEqual(watchTimings(DEFAULT_WATCH, {}), DEFAULT_WATCH);
+  assert.deepEqual(watchTimings(DEFAULT_WATCH, { quiet: 2, poll: 3 }), {
+    quiet: 2,
+    poll: 3,
+    fullSync: 300,
+  });
+  assert.match(String(watchTimings(DEFAULT_WATCH, { poll: 0.5 })), /^poll .* at least 2/);
+  assert.match(String(watchTimings(DEFAULT_WATCH, { quiet: "5" })), /^quiet/);
+  assert.match(String(watchTimings(DEFAULT_WATCH, { poll: 60, fullSync: 30 })), /^fullSync/);
+});
+
+test("config reads watch timings, writes them only when not the defaults", () => {
+  const root = tempRoot();
+  try {
+    const base: Config = { root, server: "s", project: "7", deletionCap: 10, watch: DEFAULT_WATCH };
+    writeConfig(base);
+    assert.doesNotMatch(readFileSync(join(root, "planka-sync.yaml"), "utf8"), /^watch:/m);
+    assert.deepEqual(readConfig(root)?.watch, DEFAULT_WATCH);
+    writeConfig({ ...base, watch: { quiet: 3, poll: 10, fullSync: 120 } });
+    assert.deepEqual(readConfig(root)?.watch, { quiet: 3, poll: 10, fullSync: 120 });
+    writeFileSync(join(root, "planka-sync.yaml"), "server: s\nproject: 7\nwatch:\n  poll: 1\n");
+    assert.throws(() => readConfig(root), /watch\.poll .* at least 2/);
+  } finally {
+    rmSync(root, { recursive: true });
+  }
+});
+
+test("timing flags override the config and are checked", () => {
+  const cfg = { watch: { quiet: 3, poll: 10, fullSync: 120 } } as Config;
+  assert.deepEqual(timingsFrom(cfg, { poll: "4" }), { quiet: 3, poll: 4, fullSync: 120 });
+  assert.throws(() => timingsFrom(cfg, { "full-sync": "5" }), /--full-sync/);
+  assert.throws(() => timingsFrom(cfg, { quiet: "soon" }), /--quiet/);
+});
+
+test("a pid file is claimed once, and a dead holder's file is replaced", async () => {
+  const root = tempRoot();
+  try {
+    const path = join(root, "x.pid");
+    assert.equal(claimPidFile(path), null);
+    assert.equal(liveHolder(path), process.pid);
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 10000)"]);
+    writeFileSync(path, `${child.pid}\n`);
+    assert.equal(claimPidFile(path), child.pid);
+    child.kill();
+    await new Promise((r) => child.once("exit", r));
+    assert.equal(liveHolder(path), null);
+    assert.equal(claimPidFile(path), null);
+    releasePidFile(path);
+    assert.equal(liveHolder(path), null);
+  } finally {
+    rmSync(root, { recursive: true });
+  }
+});
+
+test("withLock waits for a live holder and releases afterwards", async () => {
+  const root = tempRoot();
+  try {
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 10000)"]);
+    mkdirSync(join(root, ".planka-sync"));
+    writeFileSync(join(root, ".planka-sync/sync.lock"), `${child.pid}\n`);
+    let waitedFor = 0;
+    setTimeout(() => child.kill(), 300);
+    const value = await withLock(
+      root,
+      (pid) => (waitedFor = pid),
+      async () => 42,
+    );
+    assert.equal(value, 42);
+    assert.equal(waitedFor, child.pid);
+    assert.equal(liveHolder(join(root, ".planka-sync/sync.lock")), null);
+  } finally {
+    rmSync(root, { recursive: true });
+  }
+});
+
+test("only changes nobody synced count as foreign", () => {
+  const root = tempRoot();
+  try {
+    const store = new Store(root);
+    const card = "main/010-todo/010-a";
+    const files: Record<string, string> = {
+      "main/board.yaml":
+        "id: '1'\nname: Main\nlists:\n  - { dir: 010-todo, name: Todo, type: active }\n  - { dir: 020-empty, name: Empty, type: active }\nlabels: []\nmembers: []\n",
+      [`${card}/card.yaml`]: "id: '9'\ntitle: A\n",
+      [`${card}/description.md`]: "Hello\n",
+    };
+    for (const [rel, content] of Object.entries(files)) {
+      mkdirSync(join(root, rel, ".."), { recursive: true });
+      writeFileSync(join(root, rel), content);
+    }
+    mkdirSync(join(root, "main/020-empty"));
+    mkdirSync(join(root, "notes"));
+    store.save({
+      "main/board.yaml": { kind: "board", hash: hash(files["main/board.yaml"]!), id: "1" },
+      [`${card}/card.yaml`]: {
+        kind: "card",
+        hash: hash(files[`${card}/card.yaml`]!),
+        id: "9",
+        cardId: "9",
+      },
+      [`${card}/description.md`]: {
+        kind: "description",
+        hash: hash("Hello\n"),
+        id: "9",
+        cardId: "9",
+      },
+      [`${card}/attachments/a.png`]: { kind: "attachment", hash: null, id: "5", cardId: "9" },
+    });
+    const state = mirrorState(store);
+    const foreign = (rel: string) => isForeign(store, state, rel);
+
+    assert.equal(relevant(state, "notes/x.md"), false, "outside every board");
+    assert.equal(relevant(state, "main/010-todo/010-a/card.yaml.123.tmp"), false);
+    assert.equal(relevant(state, `${card}/description.md`), true);
+
+    assert.equal(foreign(`${card}/description.md`), false, "as the sync left it");
+    writeFileSync(join(root, card, "description.md"), "Edited\n");
+    assert.equal(foreign(`${card}/description.md`), true, "edited");
+    assert.equal(foreign(card), false, "a directory the sync produced");
+    assert.equal(foreign("main/020-empty"), false, "an empty list from board.yaml");
+    mkdirSync(join(root, "main/010-todo/new-card"));
+    assert.equal(foreign("main/010-todo/new-card"), true, "a new or moved directory");
+    writeFileSync(join(root, "main/010-todo/new-card/card.yaml.draft"), "title: B\n");
+    assert.equal(foreign("main/010-todo/new-card/card.yaml.draft"), true, "a new file");
+    writeFileSync(join(root, card, "description.md.conflict"), "Theirs\n");
+    assert.equal(foreign(`${card}/description.md.conflict`), false, "the sync writes those");
+    assert.equal(foreign(`${card}/attachments/a.png`), true, "removed after the sync wrote it");
+    assert.equal(foreign("main/010-todo/020-gone"), false, "gone and never synced");
+  } finally {
+    rmSync(root, { recursive: true });
+  }
+});
+
+test("a board fingerprint ignores download URLs but not content", () => {
+  const snap = (desc: string, url: string) =>
+    ({
+      item: { id: "1", name: "Main", projectId: "p" },
+      included: {
+        cards: [{ id: "9", description: desc }],
+        attachments: [{ id: "5", type: "file", data: { url, mimeType: "text/plain", size: 3 } }],
+      },
+    }) as unknown as Snapshot;
+  assert.equal(
+    fingerprint(snap("a", "http://x/1?sig=1")),
+    fingerprint(snap("a", "http://x/1?sig=2")),
+  );
+  assert.notEqual(fingerprint(snap("a", "http://x/1")), fingerprint(snap("b", "http://x/1")));
+});

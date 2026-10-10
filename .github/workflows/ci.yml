@@ -31,5 +31,6 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm planka:up
       - run: test/e2e.sh
+      - run: test/watch.sh
       - if: always()
         run: pnpm planka:down
