@@ -4,6 +4,7 @@ import { type BoardYaml, parseBoardYaml } from "./checks.ts";
 import type { BoardFiles, FileSpec } from "./model.ts";
 import type { Run } from "./sync.ts";
 import { verdict } from "./verdict.ts";
+import { stringify } from "yaml";
 
 interface Additions {
   labels: { name: string; color: string }[];
@@ -55,6 +56,25 @@ async function create(
   }
   run.rec.add("pushed", path, `created ${label}`);
   return true;
+}
+
+/**
+ * Planka's board.yaml plus the labels and lists someone appended to the local copy while this
+ * run was pushing earlier additions (`scanned` is what the run read), or null when nothing
+ * pushable came in. Appending is the only pushable board.yaml edit, so this is all a newer
+ * local copy can carry into the next run.
+ */
+export function carryAdditions(remote: string, scanned: string | null, now: string): string | null {
+  const r = parseBoardYaml(remote);
+  const n = parseBoardYaml(now);
+  if (!r || !n) return null;
+  const s = scanned === null ? null : parseBoardYaml(scanned);
+  const fresh = <T extends { name: string; id?: string }>(xs: T[], before: T[] | undefined) =>
+    xs.filter((x) => !x.id && !before?.some((y) => !y.id && y.name === x.name));
+  const labels = fresh(n.labels, s?.labels);
+  const lists = fresh(n.lists, s?.lists);
+  if (labels.length === 0 && lists.length === 0) return null;
+  return stringify({ ...r, labels: [...r.labels, ...labels], lists: [...r.lists, ...lists] });
 }
 
 /**

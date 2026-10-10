@@ -158,11 +158,13 @@ function namesWith(run: Run, boardDir: string, out: BoardOutcome): CurrentNames 
 async function syncBoard(run: Run, boardId: string, boardDir: string): Promise<void> {
   const opts = { current: currentNames(run.store, run.previous, boardDir), renumber: run.renumber };
   let built = await snapshotBoard(run.api, boardId, boardDir, opts);
+  const scannedBoard = run.store.readLocal(built.files[0]!.path);
   const boardYamlOutcome = await reconcileBoardYaml(run, built);
   if (boardYamlOutcome === "created") built = await snapshotBoard(run.api, boardId, boardDir, opts);
   const boardYaml = parseBoardYaml(built.files[0]!.content)!;
   const out = await reconcileBoard(run, built, boardYaml);
   out.boardReset ||= boardYamlOutcome !== "none" && !run.dry;
+  out.scannedBoard = scannedBoard;
   if (out.touched.size > 0 || out.boardReset) {
     built = await snapshotBoard(run.api, boardId, boardDir, {
       ...opts,

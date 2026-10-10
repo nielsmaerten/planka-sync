@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { parse, stringify } from "yaml";
 import { ApiError } from "../src/api.ts";
 import { type Config, DEFAULT_WATCH } from "../src/config.ts";
 import type { Planka } from "../src/planka.ts";
@@ -292,6 +293,132 @@ test("a file removed while its card is pushed is handled like any removal next t
     assert.equal(patches[0]!.name, "B");
     assert.equal(patches[0]!.description, undefined);
     assert.ok(existsSync(join(root, "main/010-todo/010-b/description.md")), "then restored");
+  } finally {
+    rmSync(root, { recursive: true });
+  }
+});
+
+test("a board.yaml addition made while another one is pushed is kept and pushed next", async () => {
+  const root = mkdtempSync(join(tmpdir(), "planka-sync-board-midrun-"));
+  try {
+    const labels: Record<string, unknown>[] = [];
+    const created: string[] = [];
+    const boardYaml = join(root, "main/board.yaml");
+    const append = (name: string, color: string) => {
+      const doc = parse(readFileSync(boardYaml, "utf8")) as { labels: unknown[] };
+      doc.labels.push({ name, color });
+      writeFileSync(boardYaml, stringify(doc));
+    };
+    let interfere = false;
+    const api = {
+      me: async () => ({ username: "admin", role: "admin" }),
+      discover: async () => ({
+        projects: [{ id: "p", name: "P" }],
+        boards: [{ id: "1", name: "Main", position: 1, projectId: "p" }],
+      }),
+      snapshot: async () => {
+        const snap = snapshot();
+        (snap.included.labels as unknown[]).push(...labels.map((l) => ({ ...l })));
+        return snap;
+      },
+      listCards: async () => ({ items: [], included: {} }),
+      createLabel: async (_board: string, name: string, color: string) => {
+        created.push(name);
+        const label = { id: `5${labels.length}`, boardId: "1", name, color, position: 1 };
+        labels.push(label);
+        // Someone appends another label while this one is being created.
+        if (interfere) append("later", "pumpkin-orange");
+        interfere = false;
+        return label;
+      },
+    } as unknown as Planka;
+    const cfg: Config = { root, server: "s", project: "p", deletionCap: 10, watch: DEFAULT_WATCH };
+    await runSync(cfg, api);
+    append("bug", "berry-red");
+    interfere = true;
+    const report = await runSync(cfg, api);
+    assert.deepEqual(created, ["bug"]);
+    assert.match(readFileSync(boardYaml, "utf8"), /name: later/, "not overwritten by the pull");
+    assert.ok(report.events.some((e) => e.outcome === "pending" && e.path === "main/board.yaml"));
+    await runSync(cfg, api);
+    assert.deepEqual(created, ["bug", "later"], "pushed by the next run");
+  } finally {
+    rmSync(root, { recursive: true });
+  }
+});
+
+test("a card directory removed while its card is pushed is trashed next, not recreated", async () => {
+  const root = mkdtempSync(join(tmpdir(), "planka-sync-vanish-"));
+  try {
+    const card: Record<string, unknown> = { ...CARD, id: "9", name: "A", description: "Body." };
+    const trash = { id: "99", boardId: "1", type: "trash", position: null, name: null };
+    const attachment = {
+      id: "7",
+      cardId: "9",
+      name: "notes.txt",
+      type: "file",
+      data: { url: "http://s/attachments/7/download/notes.txt", mimeType: "text/plain", size: 2 },
+    };
+    const dir = join(root, "main/010-todo/010-a");
+    const patches: Record<string, unknown>[] = [];
+    let interfere = false;
+    const api = {
+      me: async () => ({ username: "admin", role: "admin" }),
+      discover: async () => ({
+        projects: [{ id: "p", name: "P" }],
+        boards: [{ id: "1", name: "Main", position: 1, projectId: "p" }],
+      }),
+      snapshot: async () => {
+        const snap = snapshot();
+        (snap.included.lists as unknown[]).push(trash);
+        if (card.listId === "10") {
+          (snap.included.cards as unknown[]).push({ ...card });
+          (snap.included.attachments as unknown[]).push(attachment);
+        }
+        return snap;
+      },
+      listCards: async () => ({
+        items: [],
+        included: {
+          users: [],
+          cardLabels: [],
+          tasks: [],
+          taskLists: [],
+          attachments: [],
+          cardMemberships: [],
+        },
+      }),
+      downloadAttachment: async () => new TextEncoder().encode("hi"),
+      updateCard: async (_id: string, patch: Record<string, unknown>) => {
+        patches.push(patch);
+        Object.assign(
+          card,
+          Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)),
+        );
+        if (patch.name !== undefined) card.name = patch.name;
+        // Someone removes the whole card directory while the title is being pushed.
+        if (interfere) rmSync(dir, { recursive: true });
+        interfere = false;
+        return card;
+      },
+    } as unknown as Planka;
+    const cfg: Config = { root, server: "s", project: "p", deletionCap: 10, watch: DEFAULT_WATCH };
+    await runSync(cfg, api);
+    assert.ok(existsSync(join(dir, "attachments/notes.txt")));
+    const yaml = join(dir, "card.yaml");
+    writeFileSync(yaml, readFileSync(yaml, "utf8").replace("title: A", "title: B"));
+    interfere = true;
+    await runSync(cfg, api);
+    assert.deepEqual(
+      readdirSync(join(root, "main/010-todo")),
+      [],
+      "the removed directory is not recreated by the attachment pull",
+    );
+    await runSync(cfg, api);
+    assert.ok(
+      patches.some((p) => p.listId === "99"),
+      `trashed: ${JSON.stringify(patches)}`,
+    );
   } finally {
     rmSync(root, { recursive: true });
   }

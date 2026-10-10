@@ -20,6 +20,10 @@ export interface BoardOutcome {
   touched: Set<string>;
   /** Card id → its files as this run read them, to spot a write made while the run went on. */
   scanned: Map<string, LocalCard>;
+  /** board.yaml as this run read it, before pushing its additions. */
+  scannedBoard?: string | null;
+  /** Pushed cards whose card.yaml was removed while the run went on: nothing of them is pulled. */
+  vanished: Set<string>;
   /** Paths already decided (conflict, blocked, unresolved, invalid): the pull phase skips them. */
   handled: Set<string>;
   /** Local directory of every matched or created card, for relocation to the canonical dir. */
@@ -190,6 +194,7 @@ export async function reconcileBoard(
   const out: BoardOutcome = {
     touched: new Set(),
     scanned: new Map(),
+    vanished: new Set(),
     handled: new Set(),
     dirs: new Map(),
     tidy: [],

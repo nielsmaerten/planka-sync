@@ -23,14 +23,17 @@ export async function pullAttachments(
   out: BoardOutcome,
 ): Promise<void> {
   for (const att of built.attachments) {
-    if (out.keep.has(att.cardId)) keepPrevious(run, att.cardId, att.path);
+    if (out.keep.has(att.cardId)) keepPrevious(run, att.cardId, att.path, "card blocked");
+    // A download would recreate the directory someone just removed, without its card.yaml.
+    else if (out.vanished.has(att.cardId))
+      keepPrevious(run, att.cardId, att.path, "card removed during this sync");
     else await ensureAttachment(run, att);
   }
 }
 
 /** A kept card's attachment stays where the last run recorded it (or nowhere yet). */
-function keepPrevious(run: Run, cardId: string, path: string): void {
+function keepPrevious(run: Run, cardId: string, path: string, why: string): void {
   for (const [rel, entry] of Object.entries(run.previous.files))
     if (entry.kind === "attachment" && entry.cardId === cardId) run.next[rel] = entry;
-  run.rec.add("kept", path, "card blocked; not downloaded");
+  run.rec.add("kept", path, `${why}; not downloaded`);
 }
