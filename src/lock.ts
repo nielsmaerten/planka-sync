@@ -34,13 +34,36 @@ export function readPid(path: string): number | null {
 }
 
 /**
- * Creates the pid file for this process. Returns null on success, or the pid of the live process
- * that holds it. A file naming a dead process is stale and gets replaced.
+ * Removes a stale pid file under a short-lived takeover guard, and only if it still names the
+ * pid that was found dead: two processes that both saw the stale file must not remove each
+ * other's fresh one.
+ */
+function removeStale(path: string, stale: number | null): void {
+  const guard = `${path}.takeover`;
+  try {
+    writeFileSync(guard, `${process.pid}\n`, { flag: "wx" });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    // Someone else is taking over; a guard left by a process that died meanwhile is cleared.
+    if (liveHolder(guard) === null) rmSync(guard, { force: true });
+    return;
+  }
+  try {
+    if (readPid(path) === stale) rmSync(path, { force: true });
+  } finally {
+    rmSync(guard, { force: true });
+  }
+}
+
+/**
+ * Creates the pid file for this process. Returns null on success, or the pid of the process that
+ * holds it. A file naming a dead process is stale and gets replaced.
  * ponytail: a recycled pid makes a stale file look live; revisit if that is ever seen.
  */
 export function claimPidFile(path: string): number | null {
   mkdirSync(dirname(path), { recursive: true });
-  for (let attempt = 0; attempt < 2; attempt++) {
+  // Three rounds: clear a dead takeover guard, remove the stale file, create ours.
+  for (let attempt = 0; attempt < 3; attempt++) {
     try {
       writeFileSync(path, `${process.pid}\n`, { flag: "wx" });
       return null;
@@ -49,7 +72,7 @@ export function claimPidFile(path: string): number | null {
     }
     const holder = readPid(path);
     if (holder !== null && holder !== process.pid && isAlive(holder)) return holder;
-    rmSync(path, { force: true });
+    removeStale(path, holder);
   }
   return readPid(path) ?? -1;
 }
@@ -107,6 +130,7 @@ export type WatcherStatus =
 
 /** Records the timings of the watcher that holds the pid file. */
 export function writeWatcherInfo(root: string, timings: WatchTimings): void {
+  mkdirSync(join(root, STATE_DIR), { recursive: true });
   writeFileSync(infoPath(root), `${JSON.stringify({ pid: process.pid, timings })}\n`);
 }
 

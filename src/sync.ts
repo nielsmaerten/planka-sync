@@ -3,7 +3,7 @@
 // are never overwritten: a locally edited file that Planka also changed is reported as pending.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { apiError } from "./api.ts";
+import { ApiError, apiError } from "./api.ts";
 import { pullAttachments } from "./attachments.ts";
 import { reconcileBoardYaml } from "./board.ts";
 import { parseBoardYaml } from "./checks.ts";
@@ -221,7 +221,8 @@ async function syncBoardSafely(run: Run, boardId: string, boardDir: string): Pro
   try {
     await syncBoard(run, boardId, boardDir);
   } catch (err) {
-    run.rec.add("error", boardDir, apiError(err));
+    // A request that failed is "failed" like any other; anything else is a bug worth an error.
+    run.rec.add(err instanceof ApiError ? "failed" : "error", boardDir, apiError(err));
     if (process.env.PLANKA_SYNC_DEBUG) console.error((err as Error).stack);
     keepBoard(run, boardDir);
   }

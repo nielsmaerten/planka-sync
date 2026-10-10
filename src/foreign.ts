@@ -35,9 +35,13 @@ export function mirrorState(store: Store): MirrorState {
   return { files, boardDirs, knownDirs };
 }
 
+/** An fs.watch name in the manifest's form: forward slashes, also on Windows. */
+export const toMirrorPath = (name: string, separator: string = sep): string =>
+  name.split(separator).join("/");
+
 /** Event paths the watcher considers at all: under a mirrored board, not a temp file. */
 export function relevant(state: MirrorState, rel: string): boolean {
-  const parts = rel.split(sep);
+  const parts = rel.split("/");
   // writeAtomic's temp files come and go within one write.
   return parts.length >= 2 && state.boardDirs.has(parts[0]!) && !rel.endsWith(".tmp");
 }

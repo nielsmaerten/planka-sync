@@ -11,11 +11,13 @@ import {
   watchTimings,
   writeConfig,
 } from "../src/config.ts";
-import { isForeign, mirrorState, relevant } from "../src/foreign.ts";
+import { isForeign, mirrorState, relevant, toMirrorPath } from "../src/foreign.ts";
 import { claimPidFile, liveHolder, releasePidFile, withLock } from "../src/lock.ts";
 import type { Snapshot } from "../src/planka.ts";
 import { hash, Store } from "../src/state.ts";
-import { fingerprint, timingsFrom } from "../src/watch.ts";
+import { fingerprint, timingsFrom, Watcher } from "../src/watch.ts";
+import { ApiError } from "../src/api.ts";
+import type { Planka } from "../src/planka.ts";
 
 function tempRoot(): string {
   return mkdtempSync(join(tmpdir(), "planka-sync-watch-"));
@@ -169,4 +171,74 @@ test("a board fingerprint ignores download URLs but not content", () => {
     fingerprint(snap("a", "http://x/1?sig=2")),
   );
   assert.notEqual(fingerprint(snap("a", "http://x/1")), fingerprint(snap("b", "http://x/1")));
+});
+
+const sleeper = () => spawn(process.execPath, ["-e", "setTimeout(() => {}, 10000)"]);
+
+test("a stale pid file is left alone while another process is taking it over", async () => {
+  const root = tempRoot();
+  const dead = sleeper();
+  const live = sleeper();
+  try {
+    const path = join(root, "x.pid");
+    dead.kill();
+    await new Promise((r) => dead.once("exit", r));
+    writeFileSync(path, `${dead.pid}\n`);
+    writeFileSync(`${path}.takeover`, `${live.pid}\n`);
+    assert.notEqual(claimPidFile(path), null, "busy while the takeover runs");
+    assert.equal(readFileSync(path, "utf8"), `${dead.pid}\n`, "not removed underneath it");
+    live.kill();
+    await new Promise((r) => live.once("exit", r));
+    assert.equal(claimPidFile(path), null, "a guard whose holder died is cleared");
+    assert.equal(liveHolder(path), process.pid);
+  } finally {
+    dead.kill();
+    live.kill();
+    rmSync(root, { recursive: true });
+  }
+});
+
+test("event names are compared in the manifest's forward-slash form", () => {
+  assert.equal(
+    toMirrorPath("main\\010-todo\\010-a\\card.yaml", "\\"),
+    "main/010-todo/010-a/card.yaml",
+  );
+  assert.equal(toMirrorPath("main/010-todo", "/"), "main/010-todo");
+});
+
+test("a pass with failed requests is retried with backoff", async () => {
+  const root = tempRoot();
+  try {
+    let fetches = 0;
+    const api = {
+      me: async () => ({ username: "admin", role: "admin" }),
+      discover: async () => ({
+        projects: [{ id: "p", name: "P" }],
+        boards: [{ id: "1", name: "Main", position: 1, projectId: "p" }],
+      }),
+      snapshot: async () => {
+        fetches += 1;
+        throw new ApiError("GET /api/boards/1", 503, { code: "HTTP_503", message: "down" });
+      },
+    } as unknown as Planka;
+    const cfg: Config = { root, server: "s", project: "p", deletionCap: 10, watch: DEFAULT_WATCH };
+    const lines: string[] = [];
+    const watcher = new Watcher(cfg, api, { quiet: 1, poll: 0.05, fullSync: 30 }, (l) =>
+      lines.push(l),
+    );
+    const done = watcher.run();
+    for (let i = 0; i < 100 && lines.filter((l) => l.includes("retrying in")).length < 2; i++)
+      await new Promise((r) => setTimeout(r, 20));
+    process.emit("SIGTERM");
+    assert.equal(await done, 0);
+    assert.ok(fetches >= 2, `fetched ${fetches} times`);
+    assert.ok(lines.some((l) => l.includes("failed  main")));
+    assert.ok(lines.some((l) => l.includes("1 requests failed; retrying in 0.05s")));
+    assert.ok(
+      lines.some((l) => l.includes("retrying in 0.1s")),
+      "backoff doubles",
+    );
+  } finally {
+    rmSync(root, { recursive: true });
+  }
 });

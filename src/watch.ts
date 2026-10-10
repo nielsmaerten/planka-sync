@@ -4,7 +4,7 @@
 import { type FSWatcher, watch as watchFs } from "node:fs";
 import { ApiError, apiError } from "./api.ts";
 import { type Config, type WatchTimings, watchTimings } from "./config.ts";
-import { isForeign, type MirrorState, mirrorState, relevant } from "./foreign.ts";
+import { isForeign, type MirrorState, mirrorState, relevant, toMirrorPath } from "./foreign.ts";
 import {
   acquireLock,
   claimPidFile,
@@ -137,8 +137,9 @@ export class Watcher {
   }
 
   private onEvent(name: string | null): void {
-    if (name !== null && !relevant(this.state, name)) return;
-    this.buffer.add(name ?? "");
+    const rel = name === null ? "" : toMirrorPath(name);
+    if (rel !== "" && !relevant(this.state, rel)) return;
+    this.buffer.add(rel);
     this.scheduleFlush(200);
   }
 
@@ -180,8 +181,11 @@ export class Watcher {
     const reason = this.wanted ?? "sync";
     this.wanted = null;
     try {
-      await this.syncOnce(reason);
-      this.failures = 0;
+      const report = await this.syncOnce(reason);
+      // A request that failed (unreachable, 5xx, …) leaves part of the mirror behind: retry.
+      const failed = report.events.filter((e) => e.outcome === "failed").length;
+      if (failed > 0) this.failed(new Error(`${failed} requests failed`));
+      else this.failures = 0;
     } catch (err) {
       this.failed(err);
     } finally {
@@ -193,7 +197,7 @@ export class Watcher {
     }
   }
 
-  private async syncOnce(reason: string): Promise<void> {
+  private async syncOnce(reason: string): Promise<Report> {
     const release = await acquireLock(this.cfg.root, (pid) =>
       this.log(`${clock()}  waiting for the sync by pid ${pid}`),
     );
@@ -203,6 +207,7 @@ export class Watcher {
       this.store.writeJson("last-run.json", report);
       this.baselines = this.captured;
       this.log(formatPass(reason, report));
+      return report;
     } finally {
       release();
     }
