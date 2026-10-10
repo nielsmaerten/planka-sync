@@ -148,9 +148,10 @@ export class Watcher {
     then();
   }
 
+  /** Buffers every event: a pass can add boards, so filtering waits for the state after it. */
   private onEvent(name: string | null): void {
     const rel = name === null ? "" : toMirrorPath(name);
-    if (rel !== "" && !relevant(this.state, rel)) return;
+    if (rel !== "" && !this.running && !relevant(this.state, rel)) return;
     this.buffer.add(rel);
     this.scheduleFlush(200);
   }
@@ -171,7 +172,9 @@ export class Watcher {
     const paths = [...this.buffer];
     this.buffer.clear();
     // An empty name means the event did not say which path: assume a change.
-    if (paths.some((rel) => rel === "" || isForeign(this.store, this.state, rel))) this.quiet();
+    const foreign = (rel: string) =>
+      relevant(this.state, rel) && isForeign(this.store, this.state, rel);
+    if (paths.some((rel) => rel === "" || foreign(rel))) this.quiet();
   }
 
   private quiet(): void {

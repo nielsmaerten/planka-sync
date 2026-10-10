@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -83,6 +91,50 @@ test("a board whose sync fails keeps its empty list directories", async () => {
     fail = true;
     await runSync(cfg, api);
     assert.ok(existsSync(join(root, "main/010-todo")), "still there after the failed run");
+  } finally {
+    rmSync(root, { recursive: true });
+  }
+});
+
+test("an emptied card directory stays, and the card is not trashed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "planka-sync-emptied-"));
+  try {
+    const card = {
+      id: "9",
+      boardId: "1",
+      listId: "10",
+      name: "A",
+      description: "Body.",
+      position: 65536,
+      type: "project",
+      dueDate: null,
+      isDueCompleted: null,
+      commentsTotal: 0,
+    };
+    const updates: unknown[] = [];
+    const api = {
+      me: async () => ({ username: "admin", role: "admin" }),
+      discover: async () => ({
+        projects: [{ id: "p", name: "P" }],
+        boards: [{ id: "1", name: "Main", position: 1, projectId: "p" }],
+      }),
+      snapshot: async () => {
+        const snap = snapshot();
+        (snap.included.cards as unknown[]).push({ ...card });
+        return snap;
+      },
+      listCards: async () => ({ items: [], included: {} }),
+      updateCard: async (...args: unknown[]) => void updates.push(args),
+    } as unknown as Planka;
+    const cfg: Config = { root, server: "s", project: "p", deletionCap: 10, watch: DEFAULT_WATCH };
+    await runSync(cfg, api);
+    const dir = join(root, "main/010-todo/010-a");
+    assert.ok(existsSync(join(dir, "card.yaml")));
+    for (const f of readdirSync(dir)) rmSync(join(dir, f), { recursive: true });
+    await runSync(cfg, api);
+    assert.ok(existsSync(dir), "the emptied directory survives the run");
+    await runSync(cfg, api);
+    assert.deepEqual(updates, [], "nothing trashed");
   } finally {
     rmSync(root, { recursive: true });
   }
