@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (10/10/2026)
 
 - AGENTS.md v4: planka-sync owns only a fenced block between `<!-- planka-sync:begin … -->` and
   `<!-- planka-sync:end -->`. Text outside it is yours and kept. An existing AGENTS.md without
