@@ -99,6 +99,17 @@ until_ok 15 test -f main/010-backlog/030-drafted-card/card.yaml
 new_id=$(grep '^id' main/010-backlog/030-drafted-card/card.yaml | grep -o '[0-9]*')
 "${cli[@]}" api GET "/api/cards/$new_id" | grep -q '"description":"Written in two steps.'
 
+echo "== description.md first, card.yaml after the quiet period: the card arrives complete"
+mkdir main/010-backlog/body-first
+printf 'Body before card.\n' > main/010-backlog/body-first/description.md
+sleep 3
+test -d main/010-backlog/body-first
+printf 'title: Body first\n' > main/010-backlog/body-first/card.yaml
+synced_card() { grep -l '^title: Body first' main/010-backlog/*/card.yaml | xargs grep -q '^id'; }
+until_ok 15 synced_card
+body_id=$(grep -h '^id' "$(grep -l '^title: Body first' main/010-backlog/*/card.yaml)" | grep -o '[0-9]*')
+"${cli[@]}" api GET "/api/cards/$body_id" | grep -q '"description":"Body before card.'
+
 echo "== a comment edited in Planka arrives with the full sync"
 comment=$("${cli[@]}" api POST "/api/cards/$id/comments" '{"text":"Fresh comment."}' | json ".item.id")
 until_ok 15 bash -c 'grep -lq "Fresh comment." '"$card"'/comments/*.md'

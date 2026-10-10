@@ -111,6 +111,8 @@ export class Watcher {
     this.fsWatcher = watchFs(this.cfg.root, { recursive: true }, (_event, name) =>
       this.onEvent(name),
     );
+    // Without file events local edits would never push: stop rather than pretend to watch.
+    this.fsWatcher.on("error", (err) => this.stop(() => this.settle?.reject(err)));
     this.pollTimer = setInterval(() => void this.poll(), this.timings.poll * 1000);
     const t = this.timings;
     this.log(
