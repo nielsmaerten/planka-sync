@@ -1,7 +1,8 @@
 // The invariant behind review rounds 13–15 of PR #1, tested as a class: a sync pass never
 // overwrites or removes local state that changed since it read it. One run pushes a title edit,
 // creates a card and adds a label; at the k-th write to Planka, for every k, someone edits the
-// files involved. Every such edit must reach Planka by the next run.
+// files involved and removes an untouched card. Every such change must reach Planka by the next
+// run.
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,6 +31,17 @@ function fakePlanka(onWrite: () => void) {
     ...fields,
   });
   cards.push(card({ id: "9", name: "A", description: "Body." }));
+  cards.push(card({ id: "8", name: "B", description: "Other." }));
+  const listed = (listId: string) =>
+    cards.filter((c) => c.listId === listId).map((c) => ({ ...c }));
+  const none = {
+    users: [],
+    cardLabels: [],
+    tasks: [],
+    taskLists: [],
+    attachments: [],
+    cardMemberships: [],
+  };
   const api = {
     me: async () => ({ username: "admin", role: "admin" }),
     discover: async () => ({
@@ -39,8 +51,11 @@ function fakePlanka(onWrite: () => void) {
     snapshot: async () => ({
       item: { id: "1", name: "Main", projectId: "p" },
       included: {
-        lists: [{ id: "10", boardId: "1", type: "active", position: 65536, name: "Todo" }],
-        cards: cards.map((c) => ({ ...c })),
+        lists: [
+          { id: "10", boardId: "1", type: "active", position: 65536, name: "Todo" },
+          { id: "99", boardId: "1", type: "trash", position: null, name: null },
+        ],
+        cards: listed("10"),
         labels: labels.map((l) => ({ ...l })),
         boardMemberships: [],
         users: [],
@@ -51,6 +66,7 @@ function fakePlanka(onWrite: () => void) {
         cardMemberships: [],
       },
     }),
+    listCards: async (listId: string) => ({ items: listed(listId), included: none }),
     updateCard: async (id: string, patch: Rec) => {
       onWrite();
       const c = cards.find((x) => x.id === id)!;
@@ -105,8 +121,9 @@ function appendLabel(root: string, name: string): void {
   writeFileSync(path, stringify(doc));
 }
 
-/** What someone does at the k-th write: edits every file this run is pushing. */
+/** What someone does at the k-th write: edits every file this run pushes, removes card B. */
 function interfere(root: string, k: number): void {
+  rmSync(cardDir(root, "B"), { recursive: true });
   const a = findCard(root, "A2") ?? cardDir(root, "A");
   writeFileSync(join(a, "description.md"), `Edited at write ${k}.\n`);
   const fresh = join(cardDir(root, "New"), "card.yaml");
@@ -154,5 +171,31 @@ test("edits made at any write of a run reach Planka by the next run", async () =
       planka.labels.some((l) => l.name === `late-${k}`),
       `label appended at write ${k}: ${planka.labels.map((l) => l.name).join(", ")}`,
     );
+    const b = planka.cards.find((c) => c.id === "8")!;
+    assert.equal(b.listId, "99", `card B removed at write ${k} is trashed`);
+  }
+});
+
+test("sync --pull does not overwrite an edit made after the run read the file", async () => {
+  const root = mkdtempSync(join(tmpdir(), "planka-sync-pull-midrun-"));
+  try {
+    let armed = false;
+    const planka = fakePlanka(() => {
+      if (!armed) return;
+      armed = false;
+      writeFileSync(join(cardDir(root, "A"), "description.md"), "Newest.\n");
+    });
+    const cfg: Config = { root, server: "s", project: "p", deletionCap: 10, watch: DEFAULT_WATCH };
+    await runSync(cfg, planka.api);
+    // A conflict on A's description, and a title edit on B so the run writes to Planka.
+    writeFileSync(join(cardDir(root, "A"), "description.md"), "Local.\n");
+    planka.cards.find((c) => c.id === "9")!.description = "Remote.";
+    const b = join(cardDir(root, "B"), "card.yaml");
+    writeFileSync(b, readFileSync(b, "utf8").replace("title: B", "title: B2"));
+    armed = true;
+    await runSync(cfg, planka.api, { conflicts: "pull" });
+    assert.equal(readFileSync(join(cardDir(root, "A"), "description.md"), "utf8"), "Newest.\n");
+  } finally {
+    rmSync(root, { recursive: true });
   }
 });
