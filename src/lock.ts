@@ -2,13 +2,16 @@
 // file at the mirror root that tells agents the mirror is synced automatically.
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { STATE_DIR } from "./config.ts";
+import { STATE_DIR, type WatchTimings } from "./config.ts";
 
 export const WATCHER_PID_FILE = ".planka-watcher.pid";
 export const LOCK_FILE = "sync.lock";
+/** The running watcher's effective timings, for `status`; the pid file stays a bare pid. */
+export const WATCHER_INFO_FILE = "watcher.json";
 
 export const lockPath = (root: string): string => join(root, STATE_DIR, LOCK_FILE);
 export const watcherPath = (root: string): string => join(root, WATCHER_PID_FILE);
+const infoPath = (root: string): string => join(root, STATE_DIR, WATCHER_INFO_FILE);
 
 /** Whether a process with this pid exists (EPERM: it does, under another user). */
 export function isAlive(pid: number): boolean {
@@ -95,4 +98,39 @@ export async function withLock<T>(
   } finally {
     release();
   }
+}
+
+export type WatcherStatus =
+  | { state: "running"; pid: number; timings: WatchTimings | null }
+  | { state: "stale"; pid: number }
+  | { state: "none" };
+
+/** Records the timings of the watcher that holds the pid file. */
+export function writeWatcherInfo(root: string, timings: WatchTimings): void {
+  writeFileSync(infoPath(root), `${JSON.stringify({ pid: process.pid, timings })}\n`);
+}
+
+/** Removes the watcher's files if they still belong to this process. */
+export function releaseWatcher(root: string): void {
+  if (readPid(watcherPath(root)) !== process.pid) return;
+  rmSync(infoPath(root), { force: true });
+  rmSync(watcherPath(root), { force: true });
+}
+
+/** Whether a watcher syncs this mirror, from its pid file. */
+export function watcherStatus(root: string): WatcherStatus {
+  const pid = readPid(watcherPath(root));
+  if (pid === null) return { state: "none" };
+  if (!isAlive(pid)) return { state: "stale", pid };
+  let timings: WatchTimings | null = null;
+  try {
+    const info = JSON.parse(readFileSync(infoPath(root), "utf8")) as {
+      pid: number;
+      timings: WatchTimings;
+    };
+    if (info.pid === pid) timings = info.timings;
+  } catch {
+    // No info file: a watcher from an older version, or one still starting.
+  }
+  return { state: "running", pid, timings };
 }

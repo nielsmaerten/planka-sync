@@ -18,7 +18,7 @@ trap 'echo "failed at line $LINENO"' ERR
 pnpm -s planka:seed
 mkdir -p "$work/planka" && cd "$work/planka"
 PLANKA_PASSWORD=admin-password "${cli[@]}" init --server "$PLANKA_TEST_SERVER" --project "Sync Test" --email admin@example.com > /dev/null
-printf 'watch:\n  quiet: 2\n  poll: 2\n  fullSync: 600\n' >> planka-sync.yaml
+printf 'watch:\n  quiet: 2\n  poll: 2\n  fullSync: 30\n' >> planka-sync.yaml
 
 # Waits up to $1 seconds for the command after it to succeed.
 until_ok() {
@@ -26,7 +26,9 @@ until_ok() {
   for _ in $(seq "$((limit * 4))"); do "$@" && return 0; sleep 0.25; done
   echo "timed out after ${limit}s: $*"; tail -20 watch.log; return 1
 }
-passes() { grep -cE '^[0-9:]{8}  (start|local|remote|full|retry) ' watch.log || true; }
+# Passes something asked for; the periodic full sync is left out so timing cannot flake it.
+passes() { grep -cE '^[0-9:]{8}  (start|local|remote|retry) ' watch.log || true; }
+json() { node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(eval('('+s+')')$1))"; }
 in_planka() { "${cli[@]}" api GET "/api/cards/$id" | grep -q "$1"; }
 
 starts() { grep -cE '^[0-9:]{8}  start ' watch.log || true; }
@@ -48,6 +50,9 @@ code=0; "${cli[@]}" sync --watch > second.log 2>&1 || code=$?
 test "$code" = 2 && grep -q "already syncs" second.log && rm second.log
 code=0; "${cli[@]}" sync --watch --dry-run > /dev/null 2>&1 || code=$?
 test "$code" = 2
+"${cli[@]}" status | grep -q "^watcher:   running (pid $watcher): pushes 2s after the last write"
+"${cli[@]}" status --json | json ".watcher.timings.fullSync" | grep -qx 30
+grep -qx '/.planka-watcher.pid' .gitignore
 
 echo "== a local edit reaches Planka after the quiet period"
 card=main/010-backlog/010-write-the-readme
@@ -80,6 +85,27 @@ test "$(passes)" = "$before" || { echo "watcher kept syncing"; tail -20 watch.lo
 cp "$card/description.md.conflict" "$card/description.md" && rm "$card/description.md.conflict"
 until_ok 15 in_planka "Remote side"
 
+echo "== a draft stays local until card.yaml.draft is renamed"
+draft=main/010-backlog/030-drafted
+mkdir "$draft" && printf 'title: Drafted card\n' > "$draft/card.yaml.draft"
+sleep 3
+printf 'Written in two steps.\n' > "$draft/description.md"
+sleep 3
+test -d "$draft" && ! grep -q '^id' "$draft/card.yaml.draft"
+"${cli[@]}" validate > validate.log
+grep -q "030-drafted: draft, not synced" validate.log && rm validate.log
+mv "$draft/card.yaml.draft" "$draft/card.yaml"
+until_ok 15 test -f main/010-backlog/030-drafted-card/card.yaml
+new_id=$(grep '^id' main/010-backlog/030-drafted-card/card.yaml | grep -o '[0-9]*')
+"${cli[@]}" api GET "/api/cards/$new_id" | grep -q '"description":"Written in two steps.'
+
+echo "== a comment edited in Planka arrives with the full sync"
+comment=$("${cli[@]}" api POST "/api/cards/$id/comments" '{"text":"Fresh comment."}' | json ".item.id")
+until_ok 15 bash -c 'grep -lq "Fresh comment." '"$card"'/comments/*.md'
+"${cli[@]}" api PATCH "/api/comments/$comment" '{"text":"Edited comment."}' > /dev/null
+until_ok 45 bash -c 'grep -lq "Edited comment." '"$card"'/comments/*.md'
+grep -qE '^[0-9:]{8}  full ' watch.log
+
 echo "== an idle watcher writes nothing"
 sleep 3
 touch "$work/marker"
@@ -102,10 +128,20 @@ rm manual.log manual.err
 echo "== a killed watcher leaves a stale pid file that the next one replaces"
 kill -9 "$watcher"; wait "$watcher" 2>/dev/null || true
 test -f .planka-watcher.pid
+"${cli[@]}" status | grep -q "^watcher:   none (stale pid file for $watcher"
 start_watcher
 test "$(cat .planka-watcher.pid)" = "$watcher"
 kill -TERM "$watcher"; wait "$watcher" || true
 watcher=""
 test ! -e .planka-watcher.pid
+"${cli[@]}" status | grep -q "^watcher:   none; run"
+
+echo "== a revoked credential stops the watcher with exit 3 and removes its pid file"
+start_watcher
+"${cli[@]}" api DELETE /api/access-tokens/me > /dev/null
+code=0; wait "$watcher" || code=$?
+watcher=""
+test "$code" = 3 && test ! -e .planka-watcher.pid && test ! -e .planka-sync/watcher.json
+grep -q "npx planka-sync login" watch.log
 
 echo "watch e2e ok"

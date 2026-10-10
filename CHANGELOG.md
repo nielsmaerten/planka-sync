@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- `sync --watch` (or `npx planka-sync --watch`) keeps the mirror in sync until stopped: local
+  edits are pushed after a quiet period, Planka is polled cheaply for changes, and a periodic
+  full sync catches the rest. Timings come from `watch:` in `planka-sync.yaml` or `--quiet`,
+  `--poll`, `--full-sync`. `.planka-watcher.pid` and `status` show that a watcher is running.
+- Every sync takes a lock in `.planka-sync/`; a second sync waits for the first.
+- `card.yaml.draft`: a new card can be prepared over several writes and renamed to
+  `card.yaml` when it is ready. `validate` lists drafts as warnings.
+- AGENTS.md v3: watcher section, write `card.yaml` last, change the title last, find cards by id.
+
 ## 0.2.0 (07/10/2026)
 
 - `boards:` in `planka-sync.yaml` with an `include:` or `exclude:` list of board names or ids

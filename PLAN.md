@@ -300,6 +300,16 @@ matters more under a watcher.
 - Socket.IO live feed instead of polling.
 - A per-card-directory quiet period (see accepted risks).
 
-### Open questions
+### Amendments (10/10/2026, sic-em build)
 
-- Which fields does a comment edit change in `GET /api/boards/:id`? Answered by slice 1 step 1.
+- **Poll check (slice 1 step 1), Planka 2.0.0:** two idle `GET /api/boards/:id` responses are
+  byte-identical. Adding or deleting a comment changes the card's `commentsTotal` and
+  `updatedAt`. **Editing a comment changes nothing in the board response**, so the periodic full
+  sync is what brings comment edits in. Task and description edits do show up.
+- The poll fingerprint is the whole response minus attachment download URLs, not a hand-picked
+  projection: the probe found no volatile fields, and a projection would miss fields such as
+  label colours or list names. Baselines come from the snapshots each pass takes itself.
+- The running watcher's timings live in `.planka-sync/watcher.json` for `status`. The pid file
+  stays a bare pid, so `kill -0 "$(cat .planka-watcher.pid)"` works.
+- Bad `watch:` values in `planka-sync.yaml` exit 1 like every other config error. Bad timing
+  flags exit 2 like other usage errors.

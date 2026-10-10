@@ -11,7 +11,9 @@ import {
   liveHolder,
   lockPath,
   releasePidFile,
+  releaseWatcher,
   watcherPath,
+  writeWatcherInfo,
 } from "./lock.ts";
 import type { Planka, Snapshot } from "./planka.ts";
 import type { Report } from "./report.ts";
@@ -102,6 +104,7 @@ export class Watcher {
     if (holder !== null)
       throw new UsageError(`a watcher (pid ${holder}) already syncs ${this.cfg.root}`);
     process.on("exit", () => this.release());
+    writeWatcherInfo(this.cfg.root, this.timings);
     const done = new Promise<number>((resolve, reject) => (this.settle = { resolve, reject }));
     for (const signal of ["SIGINT", "SIGTERM"] as const)
       process.once(signal, () => this.stop(() => this.settle?.resolve(0)));
@@ -118,7 +121,7 @@ export class Watcher {
   }
 
   private release(): void {
-    releasePidFile(watcherPath(this.cfg.root));
+    releaseWatcher(this.cfg.root);
     releasePidFile(lockPath(this.cfg.root));
   }
 
