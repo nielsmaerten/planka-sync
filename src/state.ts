@@ -12,7 +12,7 @@ import {
   rmdirSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { STATE_DIR } from "./config.ts";
 
 export type Kind = "board" | "card" | "description" | "comment" | "attachment";
@@ -147,15 +147,28 @@ function pruneEmptyDirs(root: string, rel: string): void {
   }
 }
 
-/** Removes empty directories under root, bottom-up, except the ones listed and the state dir. */
-export function removeEmptyDirs(root: string, keep: Set<string>): void {
+/** Every directory above the given mirror paths. */
+export function ancestors(paths: Iterable<string>): Set<string> {
+  const dirs = new Set<string>();
+  for (const rel of paths)
+    for (let dir = dirname(rel); dir !== "." && !dirs.has(dir); dir = dirname(dir)) dirs.add(dir);
+  return dirs;
+}
+
+/**
+ * Removes empty directories under root, bottom-up: only ones the sync produced (`produced`, in
+ * forward-slash form), never the listed ones or the state dir. A directory someone just made
+ * for a new card stays, empty or not.
+ */
+export function removeEmptyDirs(root: string, keep: Set<string>, produced: Set<string>): void {
   const dirs = readdirSync(root, { recursive: true, withFileTypes: true })
     .filter((e) => e.isDirectory())
     .map((e) => join(e.parentPath, e.name).slice(root.length + 1))
     .filter((rel) => !rel.startsWith(STATE_DIR) && !rel.startsWith(".git"))
     .sort((a, b) => b.length - a.length);
   for (const rel of dirs) {
-    if (keep.has(rel) || readdirSync(join(root, rel)).length > 0) continue;
+    const key = rel.split(sep).join("/");
+    if (keep.has(key) || !produced.has(key) || readdirSync(join(root, rel)).length > 0) continue;
     rmdirSync(join(root, rel));
   }
 }

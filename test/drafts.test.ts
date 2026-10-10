@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { writeScaffold } from "../src/agents.ts";
 import { scanBoard } from "../src/local.ts";
 import type { BoardIndex } from "../src/model.ts";
-import { hash, Store } from "../src/state.ts";
+import { ancestors, hash, removeEmptyDirs, Store } from "../src/state.ts";
 import { validateRoot } from "../src/validate.ts";
 
 const BOARD_YAML =
@@ -89,6 +89,21 @@ test("the scaffold ignores the watcher's pid file, also in an existing .gitignor
       "node_modules\n/.planka-sync/\n# planka-sync: a running watcher's pid, per machine.\n/.planka-watcher.pid\n",
     );
     assert.deepEqual(writeScaffold(root), []);
+  } finally {
+    rmSync(root, { recursive: true });
+  }
+});
+
+test("cleanup keeps an empty directory someone made, removes ones the sync left empty", () => {
+  const root = mkdtempSync(join(tmpdir(), "planka-sync-empty-"));
+  try {
+    mkdirSync(join(root, "main/010-todo/new-card"), { recursive: true });
+    mkdirSync(join(root, "main/010-todo/010-a/comments"), { recursive: true });
+    writeFileSync(join(root, "main/010-todo/010-a/card.yaml"), "id: '9'\n");
+    const produced = ancestors(["main/010-todo/010-a/comments/old.md", "main/board.yaml"]);
+    removeEmptyDirs(root, new Set(["main/010-todo"]), produced);
+    assert.ok(existsSync(join(root, "main/010-todo/new-card")), "a card in the making stays");
+    assert.ok(!existsSync(join(root, "main/010-todo/010-a/comments")), "emptied by the sync");
   } finally {
     rmSync(root, { recursive: true });
   }

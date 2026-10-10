@@ -1,5 +1,6 @@
 // Structural pushes: creating cards from new directories, trashing cards whose directory went
 // away, uploading new attachments.
+import { stringify } from "yaml";
 import { apiError } from "./api.ts";
 import { ATTACHMENTS_DIR, CARD_FILE } from "./card.ts";
 import { checkCard } from "./checks.ts";
@@ -84,6 +85,9 @@ async function createCard(pass: Pass, f: FreshCard): Promise<void> {
   if (run.dry) return void run.rec.add("pushed", local.dir, `would create card "${title}"`);
   const cardId = await create(pass, f, title);
   if (cardId === null) return;
+  // The id goes to disk at once: if a later request of this run fails, the next run must find
+  // the card, not create it again.
+  run.store.writeLocal(`${local.dir}/${CARD_FILE}`, stringify({ id: cardId, ...local.meta }));
   pass.out.touched.add(cardId);
   pass.out.dirs.set(cardId, local.dir);
   const ops = freshOps(pass, local, title);

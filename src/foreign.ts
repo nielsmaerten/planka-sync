@@ -5,7 +5,7 @@ import { statSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
 import { parseBoardYaml } from "./checks.ts";
 import { CONFLICT_SUFFIX } from "./validate.ts";
-import { hash, type Manifest, type Store } from "./state.ts";
+import { ancestors, hash, type Manifest, type Store } from "./state.ts";
 
 export interface MirrorState {
   files: Manifest["files"];
@@ -15,17 +15,12 @@ export interface MirrorState {
   knownDirs: Set<string>;
 }
 
-function addAncestors(dirs: Set<string>, rel: string): void {
-  for (let dir = dirname(rel); dir !== "." && !dirs.has(dir); dir = dirname(dir)) dirs.add(dir);
-}
-
 /** What the last sync left on disk, read from its manifest and board.yaml files. */
 export function mirrorState(store: Store): MirrorState {
   const files = store.load().files;
   const boardDirs = new Set<string>();
-  const knownDirs = new Set<string>();
+  const knownDirs = ancestors(Object.keys(files));
   for (const [rel, entry] of Object.entries(files)) {
-    addAncestors(knownDirs, rel);
     if (entry.kind !== "board") continue;
     const boardDir = dirname(rel);
     boardDirs.add(boardDir);

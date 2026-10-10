@@ -17,7 +17,7 @@ import { chooseBoards } from "./select.ts";
 import { snapshotBoard } from "./pull.ts";
 import { type BoardOutcome, reconcileBoard } from "./reconcile.ts";
 import { Recorder, type Report } from "./report.ts";
-import { type Entry, hash, type Manifest, removeEmptyDirs, Store } from "./state.ts";
+import { ancestors, type Entry, hash, type Manifest, removeEmptyDirs, Store } from "./state.ts";
 import type { ConflictMode } from "./verdict.ts";
 
 export interface Run {
@@ -205,7 +205,8 @@ function prune(run: Run): void {
 function finish(run: Run): void {
   prune(run);
   if (run.dry) return;
-  removeEmptyDirs(run.cfg.root, run.listDirs);
+  const produced = ancestors([...Object.keys(run.previous.files), ...Object.keys(run.next)]);
+  removeEmptyDirs(run.cfg.root, run.listDirs, produced);
   for (const dir of run.listDirs) mkdirSync(join(run.cfg.root, dir), { recursive: true });
   run.store.save(run.next);
 }
