@@ -14,17 +14,18 @@ function scannedContent(out: BoardOutcome, file: FileSpec): string | null | unde
 }
 
 /**
- * A pushed card's file that someone wrote again while this run went on (the watcher syncs while
- * agents keep editing): force-pulling Planka's copy would erase that edit. Keep it, with
- * Planka's copy as its base, so the next run pushes it.
+ * A pushed card's file that someone wrote or removed while this run went on (the watcher syncs
+ * while agents keep editing): force-pulling Planka's copy would undo that. Keep the disk as it
+ * is, with Planka's copy as base and manifest entry, so the next run pushes the edit or removal.
  */
 function keptNewerEdit(run: Run, out: BoardOutcome, file: FileSpec): boolean {
   const before = scannedContent(out, file);
   const now = run.store.readLocal(file.path);
-  if (before === undefined || now === null || now === before) return false;
+  if (before === undefined || now === before) return false;
   run.next[file.path] = entryOf(file);
   if (!run.dry) run.store.writeBase(file.baseKey, file.content);
-  run.rec.add("pending", file.path, "edited during this sync; pushed next time");
+  const what = now === null ? "removed" : "edited";
+  run.rec.add("pending", file.path, `${what} during this sync; pushed next time`);
   return true;
 }
 

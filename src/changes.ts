@@ -1,6 +1,6 @@
 // Structural pushes: creating cards from new directories, trashing cards whose directory went
 // away, uploading new attachments.
-import { stringify } from "yaml";
+import { parse, stringify } from "yaml";
 import { apiError } from "./api.ts";
 import { ATTACHMENTS_DIR, CARD_FILE } from "./card.ts";
 import { checkCard } from "./checks.ts";
@@ -72,6 +72,33 @@ async function create(pass: Pass, f: FreshCard, title: string): Promise<string |
   }
 }
 
+/** `card.yaml` content with `id` first; text that is not a YAML mapping gets an id line on top. */
+function withId(yaml: string, cardId: string): string {
+  let doc: unknown;
+  try {
+    doc = parse(yaml);
+  } catch {
+    doc = null;
+  }
+  if (doc === null || typeof doc !== "object" || Array.isArray(doc))
+    return `id: "${cardId}"\n${yaml}`;
+  const { id: _old, ...rest } = doc as Record<string, unknown>;
+  return stringify({ id: cardId, ...rest });
+}
+
+/**
+ * The new id goes to disk at once: if a later request of this run fails, the next run must find
+ * the card, not create it again. An edit made while the create request was out is kept (the id
+ * is added to it) and, differing from what was pushed, is kept by the pull and pushed next run.
+ */
+function recordId(pass: Pass, local: LocalCard, cardId: string): void {
+  const path = `${local.dir}/${CARD_FILE}`;
+  const now = pass.run.store.readLocal(path) ?? local.cardYaml;
+  const pushed = withId(local.cardYaml, cardId);
+  pass.run.store.writeLocal(path, now === local.cardYaml ? pushed : withId(now, cardId));
+  pass.out.scanned.set(cardId, { ...local, cardYaml: pushed });
+}
+
 /** A card directory without an id: create the card, then push its extras against an empty card. */
 async function createCard(pass: Pass, f: FreshCard): Promise<void> {
   const { run } = pass;
@@ -85,11 +112,7 @@ async function createCard(pass: Pass, f: FreshCard): Promise<void> {
   if (run.dry) return void run.rec.add("pushed", local.dir, `would create card "${title}"`);
   const cardId = await create(pass, f, title);
   if (cardId === null) return;
-  // The id goes to disk at once: if a later request of this run fails, the next run must find
-  // the card, not create it again.
-  const withId = stringify({ id: cardId, ...local.meta });
-  run.store.writeLocal(`${local.dir}/${CARD_FILE}`, withId);
-  pass.out.scanned.set(cardId, { ...local, cardYaml: withId });
+  recordId(pass, local, cardId);
   pass.out.touched.add(cardId);
   pass.out.dirs.set(cardId, local.dir);
   const ops = freshOps(pass, local, title);

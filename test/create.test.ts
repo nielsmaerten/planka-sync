@@ -197,3 +197,102 @@ test("an edit made while its earlier edit is pushed survives and goes out next t
     rmSync(root, { recursive: true });
   }
 });
+
+function oneCardApi(
+  card: Record<string, unknown>,
+  onUpdate: (patch: Record<string, unknown>) => void,
+) {
+  return {
+    me: async () => ({ username: "admin", role: "admin" }),
+    discover: async () => ({
+      projects: [{ id: "p", name: "P" }],
+      boards: [{ id: "1", name: "Main", position: 1, projectId: "p" }],
+    }),
+    snapshot: async () => {
+      const snap = snapshot();
+      if (card.id) (snap.included.cards as unknown[]).push({ ...card });
+      return snap;
+    },
+    listCards: async () => ({ items: [], included: {} }),
+    updateCard: async (_id: string, patch: Record<string, unknown>) => {
+      onUpdate(patch);
+      if (patch.name !== undefined) card.name = patch.name;
+      if (patch.description !== undefined) card.description = patch.description;
+      return card;
+    },
+  } as unknown as Planka;
+}
+
+const CARD = {
+  boardId: "1",
+  listId: "10",
+  position: 65536,
+  type: "project",
+  dueDate: null,
+  isDueCompleted: null,
+  commentsTotal: 0,
+};
+
+test("a card.yaml edit made while the card is being created is kept and pushed next", async () => {
+  const root = mkdtempSync(join(tmpdir(), "planka-sync-create-edit-"));
+  try {
+    const card: Record<string, unknown> = { ...CARD, id: "", name: "", description: "" };
+    const patches: Record<string, unknown>[] = [];
+    const dir = join(root, "main/010-todo/new-card");
+    const api = oneCardApi(card, (p) => patches.push(p)) as unknown as Record<string, unknown>;
+    api.createCard = async (_list: string, name: string) => {
+      writeFileSync(join(dir, "card.yaml"), "title: Renamed while creating\n");
+      Object.assign(card, { id: "901", name });
+      return card;
+    };
+    const cfg: Config = { root, server: "s", project: "p", deletionCap: 10, watch: DEFAULT_WATCH };
+    await runSync(cfg, api as unknown as Planka);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "card.yaml"), "title: New card\n");
+    const report = await runSync(cfg, api as unknown as Planka);
+    const yaml = readdirSync(join(root, "main/010-todo"))
+      .map((d) => readFileSync(join(root, "main/010-todo", d, "card.yaml"), "utf8"))
+      .join("");
+    assert.match(yaml, /^id: "901"\ntitle: Renamed while creating\n/);
+    assert.ok(report.events.some((e) => e.outcome === "pending" && e.path.endsWith("card.yaml")));
+    await runSync(cfg, api as unknown as Planka);
+    assert.ok(
+      patches.some((p) => p.name === "Renamed while creating"),
+      JSON.stringify(patches),
+    );
+  } finally {
+    rmSync(root, { recursive: true });
+  }
+});
+
+// Same branch as a comment file removed mid-run, whose removal the next run pushes as a delete;
+// a removed description.md is restored by design, so the next run treats it like any removal.
+test("a file removed while its card is pushed is handled like any removal next time", async () => {
+  const root = mkdtempSync(join(tmpdir(), "planka-sync-midrun-rm-"));
+  try {
+    const card: Record<string, unknown> = { ...CARD, id: "9", name: "A", description: "Body." };
+    const cardYaml = join(root, "main/010-todo/010-a/card.yaml");
+    const desc = join(root, "main/010-todo/010-a/description.md");
+    const patches: Record<string, unknown>[] = [];
+    let interfere = false;
+    const api = oneCardApi(card, (p) => {
+      patches.push(p);
+      if (interfere) rmSync(desc);
+      interfere = false;
+    });
+    const cfg: Config = { root, server: "s", project: "p", deletionCap: 10, watch: DEFAULT_WATCH };
+    await runSync(cfg, api);
+    writeFileSync(cardYaml, readFileSync(cardYaml, "utf8").replace("title: A", "title: B"));
+    interfere = true;
+    const report = await runSync(cfg, api);
+    assert.ok(!existsSync(join(root, "main/010-todo/010-b/description.md")), "not restored");
+    assert.ok(report.events.some((e) => e.detail?.startsWith("removed during this sync")));
+    await runSync(cfg, api);
+    assert.equal(patches.length, 1, "the removal pushed nothing");
+    assert.equal(patches[0]!.name, "B");
+    assert.equal(patches[0]!.description, undefined);
+    assert.ok(existsSync(join(root, "main/010-todo/010-b/description.md")), "then restored");
+  } finally {
+    rmSync(root, { recursive: true });
+  }
+});
