@@ -60,6 +60,8 @@ export class Watcher {
   private running = false;
   /** Set once the watcher stops: nothing may be scheduled after that. */
   private stopped = false;
+  /** How to finish a stop that arrived during a pass, run once the pass is done. */
+  private afterStop: (() => void) | null = null;
   private polling = false;
   private pollFailing = false;
   private failures = 0;
@@ -135,6 +137,13 @@ export class Watcher {
       if (t) clearTimeout(t);
     if (this.pollTimer) clearInterval(this.pollTimer);
     this.fsWatcher?.close();
+    // Killing a pass between a Planka write and the manifest update would repeat that write
+    // next time (a card created twice): let it finish. A second Ctrl-C still kills at once.
+    if (this.running) {
+      this.log(`${clock()}  stopping after the current pass`);
+      this.afterStop = then;
+      return;
+    }
     this.release();
     then();
   }
@@ -196,7 +205,12 @@ export class Watcher {
       this.failed(err);
     } finally {
       this.running = false;
-      if (!this.stopped) this.afterPass();
+      const finishStop = this.afterStop;
+      this.afterStop = null;
+      if (finishStop) {
+        this.release();
+        finishStop();
+      } else if (!this.stopped) this.afterPass();
     }
   }
 

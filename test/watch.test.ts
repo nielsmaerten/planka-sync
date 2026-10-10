@@ -312,3 +312,44 @@ test("a credential revoked during a pass ends the watcher at the retry with the 
     rmSync(root, { recursive: true });
   }
 });
+
+test("a stop during a pass waits for the pass, then releases the lock", async () => {
+  const root = tempRoot();
+  try {
+    let finishSnapshot: () => void = () => {};
+    let snapshotStarted: () => void = () => {};
+    const started = new Promise<void>((r) => (snapshotStarted = r));
+    const api = {
+      me: async () => ({ username: "admin", role: "admin" }),
+      discover: async () => ({
+        projects: [{ id: "p", name: "P" }],
+        boards: [{ id: "1", name: "Main", position: 1, projectId: "p" }],
+      }),
+      snapshot: () =>
+        new Promise((_resolve, reject) => {
+          snapshotStarted();
+          finishSnapshot = () =>
+            reject(new ApiError("GET /api/boards/1", 503, { code: "HTTP_503", message: "x" }));
+        }),
+    } as unknown as Planka;
+    const cfg: Config = { root, server: "s", project: "p", deletionCap: 10, watch: DEFAULT_WATCH };
+    const lines: string[] = [];
+    const watcher = new Watcher(cfg, api, { quiet: 1, poll: 5, fullSync: 30 }, (l) =>
+      lines.push(l),
+    );
+    let settled = false;
+    const done = watcher.run().then((code) => ((settled = true), code));
+    await started;
+    process.emit("SIGTERM");
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(settled, false, "still finishing the pass");
+    assert.equal(liveHolder(join(root, ".planka-sync/sync.lock")), process.pid, "lock held");
+    assert.ok(lines.some((l) => l.includes("stopping after the current pass")));
+    finishSnapshot();
+    assert.equal(await done, 0);
+    assert.equal(liveHolder(join(root, ".planka-sync/sync.lock")), null, "lock released");
+    assert.equal(liveHolder(join(root, ".planka-watcher.pid")), null, "pid file released");
+  } finally {
+    rmSync(root, { recursive: true });
+  }
+});
