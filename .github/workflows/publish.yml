@@ -1,0 +1,39 @@
+# Publishes to npm when a version tag is pushed: `git tag v0.3.0 && git push origin v0.3.0`.
+# Uses npm trusted publishing (OIDC): no npm token is stored anywhere. Requires, once:
+# - npmjs.com → planka-sync → Settings → Trusted publishing → GitHub Actions:
+#   owner nielsmaerten, repository planka-sync, workflow publish.yml, environment npm.
+# - GitHub → Settings → Environments → npm, with Niels as required reviewer, so every publish
+#   waits for an explicit approval.
+name: publish
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: read
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+  publish:
+    needs: checks
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write # the OIDC token npm exchanges for a short-lived publish credential
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Tag matches package.json
+        run: test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
+      - name: npm supports trusted publishing (11.5.1 or newer)
+        run: |
+          npm --version
+          node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); process.exit(a>11||(a===11&&(b>5||(b===5&&c>=1)))?0:1)' "$(npm --version)"
+      # prepack builds dist/; provenance is generated automatically with trusted publishing,
+      # the flag only makes a missing OIDC setup fail loudly instead of falling back.
+      - run: npm publish --provenance --access public

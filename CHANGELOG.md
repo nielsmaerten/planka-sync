@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 (10/10/2026)
 
 - `sync --watch` (or `npx planka-sync --watch`) keeps the mirror in sync until stopped: local
   edits are pushed after a quiet period, Planka is polled cheaply for changes, and a periodic
@@ -10,6 +10,11 @@
 - `card.yaml.draft`: a new card can be prepared over several writes and renamed to
   `card.yaml` when it is ready. `validate` lists drafts as warnings.
 - AGENTS.md v3: watcher section, write `card.yaml` last, change the title last, find cards by id.
+- A sync never overwrites or removes a local file that changed after it read it: an edit or
+  removal made while a sync runs (likely under the watcher) is kept and handled by the next
+  run, also under `sync --pull`.
+- A created card's id is written to `card.yaml` at once, so a run that fails later cannot
+  create the card twice. An emptied card directory is no longer cleaned up (and then trashed).
 
 ## 0.2.0 (07/10/2026)
 
