@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- AGENTS.md v4: planka-sync owns only a fenced block between `<!-- planka-sync:begin … -->` and
+  `<!-- planka-sync:end -->`. Text outside it is yours and kept. An existing AGENTS.md without
+  the block (no longer overwritten) gets it appended; a v1-v3 file is replaced by the block once.
+  Broken markers leave the file alone, with a warning from `sync` and `validate`.
+
 ## 0.3.0 (10/10/2026)
 
 - `sync --watch` (or `npx planka-sync --watch`) keeps the mirror in sync until stopped: local

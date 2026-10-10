@@ -15,7 +15,9 @@ npx planka-sync                  # asks for the server URL, signs you in, lets y
 That first run pulls the project and writes:
 
 - `planka-sync.yaml` — which server and project this directory mirrors (safe to commit)
-- `AGENTS.md` — instructions for anyone, human or agent, who works in this directory
+- `AGENTS.md` — instructions for anyone, human or agent, who works in this directory. planka-sync
+  owns only the block between its `planka-sync:begin` and `planka-sync:end` markers; add your own
+  context above or below it and it is kept. An existing `AGENTS.md` gets the block appended.
 - `.gitignore` — keeps `.planka-sync/` (credential, sync state) out of git
 - one directory per board
 
