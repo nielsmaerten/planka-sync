@@ -153,6 +153,8 @@ test("only changes nobody synced count as foreign", () => {
     assert.equal(foreign("main/010-todo/new-card/card.yaml.draft"), true, "a new file");
     writeFileSync(join(root, card, "description.md.conflict"), "Theirs\n");
     assert.equal(foreign(`${card}/description.md.conflict`), false, "the sync writes those");
+    rmSync(join(root, card, "description.md.conflict"));
+    assert.equal(foreign(`${card}/description.md.conflict`), true, "deleting one resolves it");
     assert.equal(foreign(`${card}/attachments/a.png`), true, "removed after the sync wrote it");
     assert.equal(foreign("main/010-todo/020-gone"), false, "gone and never synced");
   } finally {

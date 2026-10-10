@@ -82,8 +82,9 @@ sleep 4
 before=$(passes)
 sleep 8
 test "$(passes)" = "$before" || { echo "watcher kept syncing"; tail -20 watch.log; exit 1; }
-cp "$card/description.md.conflict" "$card/description.md" && rm "$card/description.md.conflict"
-until_ok 15 in_planka "Remote side"
+# Keeping the local version takes nothing but deleting the .conflict file.
+rm "$card/description.md.conflict"
+until_ok 15 in_planka "Local side"
 
 echo "== a draft stays local until card.yaml.draft is renamed"
 draft=main/010-backlog/030-drafted

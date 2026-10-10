@@ -60,12 +60,13 @@ function kindOf(abs: string): Kind {
 export function isForeign(store: Store, state: MirrorState, rel: string): boolean {
   const entry = state.files[rel];
   const kind = kindOf(join(store.root, rel));
+  // The sync writes .conflict files and never deletes them; a deleted one is a resolution
+  // ("keep mine" needs nothing else) and must be pushed.
+  if (rel.endsWith(CONFLICT_SUFFIX)) return kind === null;
   // Gone: foreign only when the last sync produced it (a removal to push).
   if (kind === null) return entry !== undefined;
   // A directory the sync did not produce: created, moved or renamed by someone else.
   if (kind === "dir") return !state.knownDirs.has(rel);
-  // The sync writes .conflict files itself; people only delete them.
-  if (rel.endsWith(CONFLICT_SUFFIX)) return false;
   if (entry === undefined) return true;
   if (entry.hash === null) return false;
   return hash(store.readLocal(rel) ?? "") !== entry.hash;
