@@ -87,7 +87,9 @@ async function createCard(pass: Pass, f: FreshCard): Promise<void> {
   if (cardId === null) return;
   // The id goes to disk at once: if a later request of this run fails, the next run must find
   // the card, not create it again.
-  run.store.writeLocal(`${local.dir}/${CARD_FILE}`, stringify({ id: cardId, ...local.meta }));
+  const withId = stringify({ id: cardId, ...local.meta });
+  run.store.writeLocal(`${local.dir}/${CARD_FILE}`, withId);
+  pass.out.scanned.set(cardId, { ...local, cardYaml: withId });
   pass.out.touched.add(cardId);
   pass.out.dirs.set(cardId, local.dir);
   const ops = freshOps(pass, local, title);

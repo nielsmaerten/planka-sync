@@ -18,6 +18,8 @@ import { groupRemote, type RemoteCard, resolver } from "./verdict.ts";
 export interface BoardOutcome {
   /** Card ids pushed this run: re-snapshot and force-pull them. */
   touched: Set<string>;
+  /** Card id → its files as this run read them, to spot a write made while the run went on. */
+  scanned: Map<string, LocalCard>;
   /** Paths already decided (conflict, blocked, unresolved, invalid): the pull phase skips them. */
   handled: Set<string>;
   /** Local directory of every matched or created card, for relocation to the canonical dir. */
@@ -187,6 +189,7 @@ export async function reconcileBoard(
   const local = scanBoard(run.store, run.previous, built.index);
   const out: BoardOutcome = {
     touched: new Set(),
+    scanned: new Map(),
     handled: new Set(),
     dirs: new Map(),
     tidy: [],
@@ -215,6 +218,7 @@ export async function reconcileBoard(
       continue;
     }
     out.dirs.set(id, l.dir);
+    out.scanned.set(id, l);
     planned.push(planOne(pass, l, remote));
   }
   const fresh = orderCards(pass, planned);

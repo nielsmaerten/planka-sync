@@ -139,3 +139,61 @@ test("an emptied card directory stays, and the card is not trashed", async () =>
     rmSync(root, { recursive: true });
   }
 });
+
+test("an edit made while its earlier edit is pushed survives and goes out next time", async () => {
+  const root = mkdtempSync(join(tmpdir(), "planka-sync-midrun-"));
+  try {
+    const card = {
+      id: "9",
+      boardId: "1",
+      listId: "10",
+      name: "A",
+      description: "Body.",
+      position: 65536,
+      type: "project",
+      dueDate: null,
+      isDueCompleted: null,
+      commentsTotal: 0,
+    };
+    const desc = join(root, "main/010-todo/010-a/description.md");
+    const pushed: string[] = [];
+    let interfere = false;
+    const api = {
+      me: async () => ({ username: "admin", role: "admin" }),
+      discover: async () => ({
+        projects: [{ id: "p", name: "P" }],
+        boards: [{ id: "1", name: "Main", position: 1, projectId: "p" }],
+      }),
+      snapshot: async () => {
+        const snap = snapshot();
+        (snap.included.cards as unknown[]).push({ ...card });
+        return snap;
+      },
+      listCards: async () => ({ items: [], included: {} }),
+      updateCard: async (_id: string, patch: { description?: string }) => {
+        if (patch.description !== undefined) {
+          pushed.push(patch.description);
+          card.description = patch.description;
+        }
+        // Someone edits the file again while the push is in flight.
+        if (interfere) writeFileSync(desc, "Second edit.\n");
+        interfere = false;
+        return card;
+      },
+    } as unknown as Planka;
+    const cfg: Config = { root, server: "s", project: "p", deletionCap: 10, watch: DEFAULT_WATCH };
+    await runSync(cfg, api);
+    writeFileSync(desc, "First edit.\n");
+    interfere = true;
+    const report = await runSync(cfg, api);
+    assert.deepEqual(pushed, ["First edit."]);
+    assert.equal(readFileSync(desc, "utf8"), "Second edit.\n", "not overwritten by the pull");
+    assert.ok(
+      report.events.some((e) => e.outcome === "pending" && e.path.endsWith("description.md")),
+    );
+    await runSync(cfg, api);
+    assert.deepEqual(pushed, ["First edit.", "Second edit."], "pushed by the next run");
+  } finally {
+    rmSync(root, { recursive: true });
+  }
+});

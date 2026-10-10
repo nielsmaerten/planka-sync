@@ -15,6 +15,7 @@ import type { Planka } from "./planka.ts";
 import { projectBoards } from "./project.ts";
 import { chooseBoards } from "./select.ts";
 import { snapshotBoard } from "./pull.ts";
+import { pullMode } from "./pullmode.ts";
 import { type BoardOutcome, reconcileBoard } from "./reconcile.ts";
 import { Recorder, type Report } from "./report.ts";
 import { ancestors, type Entry, hash, type Manifest, removeEmptyDirs, Store } from "./state.ts";
@@ -126,10 +127,8 @@ function relocate(
 async function pullBoard(run: Run, built: BoardFiles, out: BoardOutcome): Promise<void> {
   for (const file of built.files) {
     if (out.handled.has(file.path)) continue;
-    const force =
-      out.overwrite.has(file.path) ||
-      (file.kind === "board" ? Boolean(out.boardReset) : out.touched.has(file.cardId ?? ""));
-    pullFile(run, file, force);
+    const mode = pullMode(run, out, file);
+    if (mode !== "kept") pullFile(run, file, mode === "force");
   }
   await pullAttachments(run, built, out);
   for (const dir of built.index.listDirs.values()) run.listDirs.add(dir);
