@@ -107,7 +107,7 @@ clean, `AGENTS.md` regenerated if its contract changed.
 
 ## Out of scope
 
-- Watch mode / live feed (later slice, if missed). Custom fields. Task group structure and order
+- Live Socket.IO feed (watch mode polls; see "Watch mode" below). Custom fields. Task group structure and order
   as pushable. Attachment deletion from disk. Editing archived or trashed cards. Several projects
   in one mirror. OS keychain storage.
 
@@ -159,3 +159,146 @@ clean, `AGENTS.md` regenerated if its contract changed.
 ## Needs Niels
 
 - (done) The public GitHub repo: https://github.com/nielsmaerten/planka-sync.
+
+## Watch mode (decided 10/10/2026, grilled 10/10/2026)
+
+Reverses "one-shot only, no daemon, watcher or lock" from 23/09/2026. Target version 0.3.0.
+
+### Decisions
+
+- **`planka-sync --watch`** (also `sync --watch`) runs the sync in a loop until Ctrl-C or SIGTERM.
+  **Foreground only**: logs one line per pass to stdout. Users background it themselves (tmux,
+  `&`, systemd user unit). No self-detach, no stop verb in this work.
+- **Two-way, debounced.** A recursive `fs.watch` on the mirror root triggers a full sync after a
+  quiet period without writes. Agents never need to run sync while a watcher is running.
+  **Only events under mirrored board directories count.** Ignored: `.planka-sync/`, `.git*`,
+  `*.tmp`, the pid file, root-level non-board directories, and boards excluded by `boards:`.
+  Writes to a draft card (below) do wake the watcher, and the pass does nothing: an accepted
+  cost.
+- **Remote detection: cheap poll + periodic full sync.** On each poll, `GET /api/boards/:id` for
+  every mirrored board (one call per board). Hash a **normalised projection**: ids, `updatedAt`,
+  positions, list membership, `commentsTotal`, labels, memberships. Never hash the raw response,
+  because a volatile field (signed URLs, presence) would make every poll look like a change. A
+  hash change triggers a full sync. A periodic full sync also catches what the projection misses:
+  edits to existing comments, boards added to the project.
+- **Configurable timings.** `watch:` in `planka-sync.yaml`, with flags overriding it for one run:
+
+  ```yaml
+  watch:
+    quiet: 5      # seconds without local writes before a push   (--quiet,     min 1)
+    poll: 10      # seconds between cheap polls                  (--poll,      min 2)
+    fullSync: 300 # seconds between full syncs                   (--full-sync, min 30, >= poll)
+  ```
+
+  Values below the minimums are config errors (exit 2), so a typo can't flood a shared server.
+  The watcher reads the config once at start, so a change needs a restart.
+- **`.planka-watcher.pid`** at the mirror root holds the watcher's pid. It means "this mirror is
+  being synced automatically". Written on start, removed on clean exit. A stale file (`kill -0`
+  fails) counts as no watcher and gets replaced. A live one makes a second `--watch` exit 2. The
+  generated `.gitignore` covers it. `status` shows the running watcher's pid and effective
+  timings. AGENTS.md points there rather than hardcoding seconds.
+- **Sync lock for every run.** Each sync, from the watcher or by hand, takes an exclusive lock
+  file in `.planka-sync/` (O_EXCL, holding the pid; stale when the pid is dead). A manual
+  `npx planka-sync` waits for the watcher's current pass, then runs normally and prints its own
+  report. Agents can still force an immediate push and read conflicts directly.
+- **Rescheduling only on foreign writes.** File events during a pass are recorded, not acted on.
+  After the pass, an event whose file now matches what the pass wrote is the watcher's own
+  write and is dropped. Any other event (an agent edit made during the pass) schedules the next
+  pass. **Never reschedule just because `validate` still shows pending changes.** Blocked cards,
+  unresolved `.conflict` files, edits in excluded boards and half-built card directories stay
+  pending through any number of passes, and would make the watcher sync back to back forever.
+- **Failures.** A network or 5xx error is logged and retried with backoff, and the watcher keeps
+  running. A 401 or missing credential logs the `login` hint, removes the pid file and exits 3:
+  agents must not believe a dead watcher is syncing. Conflicts, blocked and failed items land as
+  they do today (`.conflict` files, `last-run.json`). The deletion cap still refuses (no `--yes`
+  in watch mode).
+
+### Agent contract (AGENTS.md v3)
+
+Applies whether or not a watcher runs, since a manual sync can rename directories too. It just
+matters more under a watcher.
+
+- **New card: write `card.yaml` last.** A card directory without `card.yaml` is invisible to the
+  sync: not created, not renamed, not pruned. This becomes a documented guarantee, with a unit
+  test so a refactor can't break it. Write `description.md`, `comments/` and `attachments/`
+  first. `card.yaml` is the commit.
+- **Complex new card: `card.yaml.draft`.** When a card can't be written in one go, write
+  `card.yaml.draft` in the target list directory instead. Rewrite the draft and the other files
+  as often as needed, then `mv card.yaml.draft card.yaml` when it's ready. The rename is
+  atomic, so the card arrives complete in one pass. `validate` reports a draft as a warning
+  ("draft, not synced; rename to card.yaml when ready"), not as an error. Otherwise an agent
+  checking mid-draft would be told to fix it (exit 1) and would create `card.yaml` too early.
+  ponytail: a rename convention instead of a draft area that the watcher ignores. Revisit if
+  agents leave drafts behind, or if wasted passes while drafting become a cost.
+- **Title last.** The directory name derives from the title, so a title change renames the
+  directory on the next pass. Change `title:` as the last edit to a card. After any sync, find a
+  card by its `id:` (e.g. `grep -rl "id: <id>" <board>`), not by an old path.
+- **Watcher present** (`.planka-watcher.pid` exists, `status` says running): edits push by
+  themselves after the quiet period shown in `status`. Check `status` for conflicts and errors.
+  Running sync by hand is still safe.
+
+### Accepted risks
+
+- **Drafting wakes the watcher.** Each write to a draft card triggers a pass that changes
+  nothing (a full sync's requests). Agents without a shell can't rename a file and fall back to
+  writing `card.yaml` last.
+
+- **Writing to a stale path after a rename.** An agent that changes a title (or whose card is
+  renamed or moved in Planka) and later writes to the old path recreates a directory holding
+  only `description.md`. The sync ignores it, so the edit is not pushed, and `validate`/`status`
+  report `card.yaml: missing`. Nothing is lost on the Planka side, and the AGENTS.md rules
+  above make this rare. Revisit if it shows up in practice: options are a per-card-directory
+  quiet period, or the watcher adopting a `card.yaml`-less directory whose old path the
+  manifest knows.
+
+### Slices
+
+#### Watch slice 1: the loop, end to end
+
+1. **First, the poll check** (it decides the projection). Against the Docker Planka: call
+   `GET /api/boards/:id` twice with nothing changed and diff the responses (volatile fields).
+   Then add a comment, edit a comment, and edit a task in turn, and note which projection
+   fields change (`updatedAt`, `commentsTotal`, …). Record the result in this plan.
+2. Sync lock in `syncVerb`, used by every sync.
+3. `--watch`: pid file lifecycle with stale detection, event filtering, local quiet period,
+   cheap poll on the normalised projection, own-write detection and rescheduling, one log line
+   per pass, SIGINT/SIGTERM cleanup. Timings fixed at the defaults in this slice.
+
+- **Done when**, against the Docker Planka: a `description.md` edit reaches Planka within ~quiet
+  seconds of the last write; a card edited in the Planka UI/API lands on disk within ~poll
+  seconds; a card written into a **list directory created after the watcher started** is
+  pushed (proves recursive `fs.watch` picks up new directories); a manual `npx planka-sync`
+  during a pass waits, then reports cleanly; a second `--watch` exits 2; after `kill -9`, the
+  next `--watch` replaces the stale pid file; an idle watcher makes only the poll calls and
+  writes nothing; a mirror with a blocked card and a `.conflict` file stays idle and doesn't
+  loop.
+
+#### Watch slice 2: config, agent contract, robustness
+
+- `watch:` config block with flag overrides, minimums, and `status` showing effective values.
+- AGENTS.md v3 (section above), plus a unit test for the guarantee that a directory without
+  `card.yaml` is invisible to the sync.
+- `validate`: `card.yaml.draft` is a known card entry, and a directory holding one gets a draft
+  warning instead of `unknown entry` and `card.yaml: missing` errors.
+- `status` (and `--json`) shows the watcher: running with pid and timings, stale, or none.
+- `.gitignore` template gains the pid file (appended to existing mirrors, as for
+  `.planka-sync/`).
+- Periodic full sync, network backoff, exit 3 on auth failure.
+- README commands table, CHANGELOG 0.3.0, e2e coverage for the watcher.
+- **Done when:** a card drafted as `card.yaml.draft` over several writes spaced beyond the quiet
+  period stays local, `validate` exits 0 with a draft warning, and after the rename the card
+  arrives in Planka complete in one pass; a card whose `description.md` is written
+  first and whose `card.yaml` comes in after the quiet period arrives complete; a comment edited
+  in Planka reaches disk within `fullSync` seconds (or `poll`, if step 1 shows the projection
+  catches it); `poll: 0.5` is refused; stopping the test server makes the watcher log and retry
+  without exiting; revoking the token exits 3 and removes the pid file.
+
+### Later, if missed
+
+- Self-detaching `--watch` with a log file and a stop verb.
+- Socket.IO live feed instead of polling.
+- A per-card-directory quiet period (see accepted risks).
+
+### Open questions
+
+- Which fields does a comment edit change in `GET /api/boards/:id`? Answered by slice 1 step 1.
