@@ -140,6 +140,7 @@ test("only changes nobody synced count as foreign", () => {
 
     assert.equal(relevant(state, "notes/x.md"), false, "outside every board");
     assert.equal(relevant(state, "main/010-todo/010-a/card.yaml.123.tmp"), false);
+    assert.equal(relevant(state, `${card}/attachments/scratch.tmp`), true, "a user's .tmp file");
     assert.equal(relevant(state, `${card}/description.md`), true);
 
     assert.equal(foreign(`${card}/description.md`), false, "as the sync left it");

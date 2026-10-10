@@ -42,8 +42,8 @@ export const toMirrorPath = (name: string, separator: string = sep): string =>
 /** Event paths the watcher considers at all: under a mirrored board, not a temp file. */
 export function relevant(state: MirrorState, rel: string): boolean {
   const parts = rel.split("/");
-  // writeAtomic's temp files come and go within one write.
-  return parts.length >= 2 && state.boardDirs.has(parts[0]!) && !rel.endsWith(".tmp");
+  // writeAtomic's `<file>.<pid>.tmp` files come and go within one write.
+  return parts.length >= 2 && state.boardDirs.has(parts[0]!) && !/\.\d+\.tmp$/.test(rel);
 }
 
 type Kind = "file" | "dir" | null;
