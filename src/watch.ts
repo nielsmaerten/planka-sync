@@ -198,7 +198,7 @@ export class Watcher {
     try {
       const report = await this.syncOnce(reason);
       // A request that failed (unreachable, 5xx, …) leaves part of the mirror behind: retry.
-      const failed = report.events.filter((e) => e.outcome === "failed").length;
+      const failed = report?.events.filter((e) => e.outcome === "failed").length ?? 0;
       if (failed > 0) this.failed(new Error(`${failed} requests failed`));
       else this.failures = 0;
     } catch (err) {
@@ -222,10 +222,14 @@ export class Watcher {
     if (this.wanted && !this.quietTimer && !this.retryTimer) void this.pass();
   }
 
-  private async syncOnce(reason: string): Promise<Report> {
-    const release = await acquireLock(this.cfg.root, (pid) =>
-      this.log(`${clock()}  waiting for the sync by pid ${pid}`),
+  /** One locked sync; null when the watcher was stopped while it waited for the lock. */
+  private async syncOnce(reason: string): Promise<Report | null> {
+    const release = await acquireLock(
+      this.cfg.root,
+      (pid) => this.log(`${clock()}  waiting for the sync by pid ${pid}`),
+      () => this.stopped,
     );
+    if (release === null) return null;
     try {
       this.captured = new Map();
       const report = await runSync(this.cfg, this.api, { conflicts: "ask" });

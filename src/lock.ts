@@ -103,15 +103,18 @@ const pause = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 
 /**
  * Takes the sync lock, waiting while another live process holds it. `onWait` is called once,
- * with the holder's pid, when the lock is busy. Returns the function that releases it.
+ * with the holder's pid, when the lock is busy. Returns the function that releases it, or null
+ * once `cancelled` says to stop waiting.
  */
 export async function acquireLock(
   root: string,
   onWait?: (holder: number) => void,
-): Promise<() => void> {
+  cancelled: () => boolean = () => false,
+): Promise<(() => void) | null> {
   const path = lockPath(root);
   let told = false;
   for (;;) {
+    if (cancelled()) return null;
     const holder = claimPidFile(path);
     if (holder === null) return () => releasePidFile(path);
     if (!told) onWait?.(holder);
@@ -126,7 +129,7 @@ export async function withLock<T>(
   onWait: (holder: number) => void,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const release = await acquireLock(root, onWait);
+  const release = (await acquireLock(root, onWait))!;
   try {
     return await fn();
   } finally {

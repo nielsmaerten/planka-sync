@@ -353,3 +353,34 @@ test("a stop during a pass waits for the pass, then releases the lock", async ()
     rmSync(root, { recursive: true });
   }
 });
+
+test("a stop while waiting for the lock gives up without syncing", async () => {
+  const root = tempRoot();
+  const holder = sleeper();
+  try {
+    mkdirSync(join(root, ".planka-sync"));
+    writeFileSync(join(root, ".planka-sync/sync.lock"), `${holder.pid}\n`);
+    let synced = false;
+    const api = {
+      me: async () => {
+        synced = true;
+        return { username: "admin", role: "admin" };
+      },
+    } as unknown as Planka;
+    const cfg: Config = { root, server: "s", project: "p", deletionCap: 10, watch: DEFAULT_WATCH };
+    const lines: string[] = [];
+    const watcher = new Watcher(cfg, api, { quiet: 1, poll: 5, fullSync: 30 }, (l) =>
+      lines.push(l),
+    );
+    const done = watcher.run();
+    for (let i = 0; i < 50 && !lines.some((l) => l.includes("waiting for the sync by pid")); i++)
+      await new Promise((r) => setTimeout(r, 20));
+    process.emit("SIGTERM");
+    assert.equal(await done, 0, "settles although the holder is still alive");
+    assert.equal(synced, false, "no sync after the stop");
+    assert.equal(readFileSync(join(root, ".planka-sync/sync.lock"), "utf8"), `${holder.pid}\n`);
+  } finally {
+    holder.kill();
+    rmSync(root, { recursive: true });
+  }
+});
