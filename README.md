@@ -1,5 +1,7 @@
 # planka-sync
 
+![AI coding agents such as Claude and Codex work with a local directory; a human uses a Planka kanban board. Running planka-sync pushes local edits to Planka and pulls board changes to disk.](docs/overview.png)
+
 Mirror a [Planka 2](https://planka.app) project into a directory and keep it in sync both ways.
 Boards become directories, lists become directories, cards become a `card.yaml` plus a
 `description.md`, comments and attachments become files. Edit the files (you, a script, an AI
