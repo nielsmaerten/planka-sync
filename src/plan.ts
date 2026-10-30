@@ -4,7 +4,7 @@ import { type BoardYaml, checkCard } from "./checks.ts";
 import { planComments } from "./comments.ts";
 import { mergeUpdates, metaOps, type Op } from "./diff.ts";
 import type { LocalCard } from "./local.ts";
-import { type BoardIndex, type FileSpec, resolveListId } from "./model.ts";
+import { type BoardIndex, canonicalListDir, type FileSpec, resolveListId } from "./model.ts";
 import type { Manifest } from "./state.ts";
 import { type RemoteCard, type Resolve, verdict } from "./verdict.ts";
 
@@ -60,7 +60,7 @@ function file(input: PlanInput, plan: CardPlan, f: FileSpec, local: string | nul
 function planMeta(input: PlanInput, plan: CardPlan): void {
   const { local, remote, index, board } = input;
   if (!file(input, plan, remote.card, local.cardYaml)) return;
-  const errors = checkCard(local.meta, local.listDir, board);
+  const errors = checkCard(local.meta, canonicalListDir(index, local.listDir), board);
   if (errors.length > 0) return void (plan.blocked = errors.join("; "));
   const remoteMeta = parseCardYaml(remote.card.content) as CardYaml;
   const ops = metaOps({ local: local.meta, remote: remoteMeta, index });
