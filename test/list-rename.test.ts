@@ -12,14 +12,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { type Config, DEFAULT_WATCH } from "../src/config.ts";
-import type { Planka } from "../src/planka.ts";
+import type { List, Planka } from "../src/planka.ts";
 import { runSync } from "../src/sync.ts";
 
 type Rec = Record<string, unknown>;
 
 /** Isolated remote state; the real sync engine reads and writes a temporary mirror. */
 function fakePlanka() {
-  const lists = [{ id: "10", boardId: "1", type: "active", position: 65536, name: "Todo" }];
+  const lists: (List & { boardId: string })[] = [
+    { id: "10", boardId: "1", type: "active", position: 65536, name: "Todo" },
+  ];
   const cards: Rec[] = [];
   const labels: Rec[] = [];
   let ids = 100;
@@ -55,7 +57,7 @@ function fakePlanka() {
       item: { id: "1", name: "Main", projectId: "p" },
       included: {
         lists: lists.map((l) => ({ ...l })),
-        cards: cards.map((c) => ({ ...c })),
+        cards: lists.filter((l) => l.name !== null).flatMap((l) => listed(l.id)),
         labels: labels.map((l) => ({ ...l })),
         boardMemberships: [],
         users: [],
@@ -184,6 +186,47 @@ for (const change of ["remote move", "local move", "remote reorder", "local reor
       assert.equal(next.stats.errors, 0);
       assert.equal(next.stats.pushed, 0);
       assert.equal(next.stats.deleted, 0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const builtin of ["archive", "trash"]) {
+  test(`named ${builtin} list does not shadow the built-in directory`, async () => {
+    const root = mkdtempSync(join(tmpdir(), "planka-sync-builtin-"));
+    try {
+      const { api, cards, lists } = fakePlanka();
+      lists[0]!.name = builtin[0]!.toUpperCase() + builtin.slice(1);
+      lists.push({ id: "90", boardId: "1", type: builtin, position: null, name: null });
+      cards[0]!.listId = "90";
+      const cfg: Config = {
+        root,
+        server: "s",
+        project: "p",
+        deletionCap: 10,
+        watch: DEFAULT_WATCH,
+      };
+      assert.equal((await runSync(cfg, api)).stats.errors, 0);
+      cards[0]!.description = "Remote builtin edit.";
+      cards[1]!.description = "Remote named-list edit.";
+      const report = await runSync(cfg, api);
+      assert.equal(report.stats.errors, 0, JSON.stringify(report.events));
+      assert.equal(report.stats.pushed, 0);
+      assert.equal(
+        readFileSync(join(root, `main/${builtin}/010-a/description.md`), "utf8"),
+        "Remote builtin edit.\n",
+      );
+      assert.equal(
+        readFileSync(join(root, `main/010-${builtin}/010-b/description.md`), "utf8"),
+        "Remote named-list edit.\n",
+      );
+      // The normal list can still be renamed while the reserved directory keeps its identity.
+      lists[0]!.name = "Reference";
+      assert.equal((await runSync(cfg, api)).stats.errors, 0);
+      assert.equal(cards[0]!.listId, "90");
+      assert.ok(existsSync(join(root, `main/${builtin}/010-a/card.yaml`)));
+      assert.ok(existsSync(join(root, "main/010-reference/010-b/card.yaml")));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

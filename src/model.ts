@@ -144,13 +144,17 @@ export function boardYaml(ctx: Context, lists: List[], dirs: Map<string, string>
 }
 
 /** Resolve existing local names by identity before trying current remote names. */
-export const resolveListId = (index: BoardIndex, dir: string): string | undefined =>
-  index.localListIdByDir.get(dir) ??
-  [...index.localListIdByDir].find(
-    ([name]) => parsePrefixed(name).slug === parsePrefixed(dir).slug,
-  )?.[1] ??
-  index.listIdByDir.get(dir) ??
-  index.listIdBySlug.get(parsePrefixed(dir).slug);
+export function resolveListId(index: BoardIndex, dir: string): string | undefined {
+  if (index.builtinDirs.has(dir)) return index.listIdByDir.get(dir);
+  return (
+    index.localListIdByDir.get(dir) ??
+    [...index.localListIdByDir].find(
+      ([name]) => parsePrefixed(name).slug === parsePrefixed(dir).slug,
+    )?.[1] ??
+    index.listIdByDir.get(dir) ??
+    index.listIdBySlug.get(parsePrefixed(dir).slug)
+  );
+}
 
 /** Canonical directory for validating local cards against the current remote board. */
 export function canonicalListDir(index: BoardIndex, dir: string): string {
