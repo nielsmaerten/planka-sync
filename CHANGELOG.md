@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1 (30/10/2026)
+
+- Renaming a list in Planka now moves its local directory without blocking its cards or deleting
+  their files. Local edits, conflicts, card moves and ordering keep working across the rename.
+- Named lists called Archive or Trash no longer shadow Planka's built-in archive/trash folders.
+
 ## 0.4.0 (10/10/2026)
 
 - AGENTS.md v4: planka-sync owns only a fenced block between `<!-- planka-sync:begin … -->` and
