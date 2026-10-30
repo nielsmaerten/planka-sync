@@ -37,6 +37,8 @@ export interface BoardIndex {
   boardId: string;
   boardDir: string;
   listIdByDir: Map<string, string>;
+  /** Existing local directory names, kept by list identity across remote renames. */
+  localListIdByDir: Map<string, string>;
   /** Named lists by the slug part of their directory, for directories renamed to another prefix. */
   listIdBySlug: Map<string, string>;
   /** Dirs of Planka's built-in archive/trash lists; files there are pull-only. */
@@ -141,9 +143,25 @@ export function boardYaml(ctx: Context, lists: List[], dirs: Map<string, string>
   );
 }
 
-/** The list a local directory stands for: by exact name, else by slug (prefix renamed). */
-export const resolveListId = (index: BoardIndex, dir: string): string | undefined =>
-  index.listIdByDir.get(dir) ?? index.listIdBySlug.get(parsePrefixed(dir).slug);
+/** Resolve existing local names by identity before trying current remote names. */
+export function resolveListId(index: BoardIndex, dir: string): string | undefined {
+  if (index.builtinDirs.has(dir)) return index.listIdByDir.get(dir);
+  return (
+    index.localListIdByDir.get(dir) ??
+    [...index.localListIdByDir].find(
+      ([name]) => parsePrefixed(name).slug === parsePrefixed(dir).slug,
+    )?.[1] ??
+    index.listIdByDir.get(dir) ??
+    index.listIdBySlug.get(parsePrefixed(dir).slug)
+  );
+}
+
+/** Canonical directory for validating local cards against the current remote board. */
+export function canonicalListDir(index: BoardIndex, dir: string): string {
+  const id = resolveListId(index, dir);
+  const path = id === undefined ? undefined : index.listDirs.get(id);
+  return path === undefined ? dir : path.slice(path.lastIndexOf("/") + 1);
+}
 
 export interface BuildOptions {
   current?: CurrentNames;
@@ -193,7 +211,11 @@ export function buildBoardFiles(
       attachments.push(...a);
     }
   }
-  return { files, attachments, index: buildIndex(ctx, { boardDir, lists, dirs, cardDirs }) };
+  return {
+    files,
+    attachments,
+    index: buildIndex(ctx, { boardDir, lists, dirs, cardDirs }, current),
+  };
 }
 
 function renumberIds(ids: string[]): Ordering {
@@ -207,11 +229,23 @@ interface Layout {
   cardDirs: Map<string, string>;
 }
 
-function buildIndex(ctx: Context, { boardDir, lists, dirs, cardDirs }: Layout): BoardIndex {
+function buildIndex(
+  ctx: Context,
+  { boardDir, lists, dirs, cardDirs }: Layout,
+  current: CurrentNames,
+): BoardIndex {
   const { labels, users, cards } = ctx.snap.included;
   return {
     boardId: ctx.snap.item.id,
     boardDir,
+    localListIdByDir: new Map(
+      lists
+        .filter((l) => l.name !== null)
+        .flatMap((l) => {
+          const dir = current.listDir(l.id);
+          return dir === null ? [] : [[dir, l.id]];
+        }),
+    ),
     listIdByDir: new Map(lists.map((l) => [dirs.get(l.id)!, l.id])),
     listIdBySlug: new Map(
       lists.filter((l) => l.name !== null).map((l) => [parsePrefixed(dirs.get(l.id)!).slug, l.id]),

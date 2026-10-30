@@ -86,18 +86,21 @@ export function pullFile(run: Run, file: FileSpec, force = false): void {
   else run.rec.unchanged();
 }
 
-/** Manifest entries under `from` now describe files under `to`. */
-function remapPrevious(run: Run, from: string, to: string): void {
-  for (const [path, entry] of Object.entries(run.previous.files)) {
-    if (path !== from && !path.startsWith(`${from}/`)) continue;
-    delete run.previous.files[path];
-    run.previous.files[`${to}${path.slice(from.length)}`] = entry;
+/** Both manifests follow relocated files, including blocked and conflicted cards. */
+function remapManifests(run: Run, from: string, to: string): void {
+  for (const files of [run.previous.files, run.next]) {
+    for (const [path, entry] of Object.entries(files)) {
+      if (path !== from && !path.startsWith(`${from}/`)) continue;
+      delete files[path];
+      files[`${to}${path.slice(from.length)}`] = entry;
+    }
   }
 }
 
 /** Outcome paths under a moved directory follow it. */
 function remapOutcome(out: BoardOutcome, from: string, to: string): void {
   const under = (p: string) => (p.startsWith(`${from}/`) ? `${to}${p.slice(from.length)}` : p);
+  out.handled = new Set([...out.handled].map(under));
   out.tidy = out.tidy.map(under);
   for (const [id, dir] of out.dirs) out.dirs.set(id, under(dir));
 }
@@ -123,7 +126,7 @@ function relocate(
     // ponytail: a stray directory already at the target wins; validate reports the duplicate.
     if (!run.dry && run.store.exists(to)) continue;
     if (!run.dry) run.store.move(from, to);
-    remapPrevious(run, from, to);
+    remapManifests(run, from, to);
     remapOutcome(out, from, to);
     run.rec.add("moved", to, `from ${from}`);
   }

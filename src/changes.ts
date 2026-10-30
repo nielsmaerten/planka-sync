@@ -6,6 +6,7 @@ import { ATTACHMENTS_DIR, CARD_FILE } from "./card.ts";
 import { checkCard } from "./checks.ts";
 import { metaOps, type Op } from "./diff.ts";
 import type { LocalCard } from "./local.ts";
+import { canonicalListDir } from "./model.ts";
 import type { FreshCard } from "./ordering.ts";
 import { type Pass, push } from "./reconcile.ts";
 import type { Entry } from "./state.ts";
@@ -106,7 +107,11 @@ function recordId(pass: Pass, local: LocalCard, cardId: string): void {
 async function createCard(pass: Pass, f: FreshCard): Promise<void> {
   const { run } = pass;
   const { local } = f;
-  const errors = checkCard(local.meta, local.listDir, pass.board);
+  const errors = checkCard(
+    local.meta,
+    canonicalListDir(pass.built.index, local.listDir),
+    pass.board,
+  );
   if (!f.listId || errors.length > 0) {
     const why = errors.join("; ") || `"${local.listDir}" is not a list directory`;
     return void run.rec.add("blocked", local.dir, why);
