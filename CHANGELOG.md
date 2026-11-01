@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.2 (01/11/2026)
+
+- Restoring a card from trash or archive in Planka now moves its local directory instead of
+  blocking every sync, including `sync --pull`. Moves between the built-in lists also work.
+
 ## 0.4.1 (30/10/2026)
 
 - Renaming a list in Planka now moves its local directory without blocking its cards or deleting
