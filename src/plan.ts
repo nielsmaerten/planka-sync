@@ -93,7 +93,6 @@ function moveTarget(
   input: PlanInput,
   ids: { local: string; remote?: string; previous: string | null },
 ): string | null | "conflict" {
-  if (ids.previous !== null && ids.local === ids.previous) return null; // moved in Planka only
   const bothMoved = ids.previous !== null && ids.remote !== ids.previous;
   const v = input.resolve(bothMoved ? "conflict" : "push");
   if (v === "push") return ids.local;
@@ -106,10 +105,14 @@ function planMove(input: PlanInput, plan: CardPlan): void {
   const listId = resolveListId(index, local.listDir);
   const remoteId = index.listIdByDir.get(remote.listDir);
   if (listId === remoteId) return;
-  const problem = moveProblem(index, local.listDir, listId);
-  if (problem) return void (plan.blocked = problem);
   const previousDir = input.previousListDir;
   const previous = previousDir === null ? null : (resolveListId(index, previousDir) ?? null);
+  // A remote-only move is a pull, even when the old local directory is trash or archive.
+  if (listId === previous) return void (plan.pulledMove = true);
+  // ponytail: local moves into built-in lists stay blocked; revisit when tree-driven
+  // archive/trash moves are supported.
+  const problem = moveProblem(index, local.listDir, listId);
+  if (problem) return void (plan.blocked = problem);
   const target = moveTarget(input, { local: listId!, remote: remoteId, previous });
   if (target === "conflict")
     plan.blocked = `moved on both sides (Planka: ${remote.listDir}); move it there, or sync --push / --pull`;

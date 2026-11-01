@@ -100,6 +100,54 @@ function stageEdit(edit: string, old: string, cards: Rec[]): void {
   if (edit === "invalid") writeFileSync(join(old, "card.yaml"), "[invalid");
 }
 
+for (const source of ["trash", "archive"]) {
+  for (const destination of ["010-todo", source === "trash" ? "archive" : "trash"]) {
+    for (const conflicts of ["ask", "pull"] as const) {
+      test(`pull remote ${source} → ${destination} move (${conflicts})`, async () => {
+        const root = mkdtempSync(join(tmpdir(), "planka-sync-restore-"));
+        try {
+          const { api, cards, lists } = fakePlanka();
+          lists.push(
+            { id: "90", boardId: "1", type: "trash", position: null, name: null },
+            { id: "91", boardId: "1", type: "archive", position: null, name: null },
+          );
+          const id = (dir: string) => (dir === "trash" ? "90" : dir === "archive" ? "91" : "10");
+          cards[0]!.listId = id(source);
+          const cfg: Config = {
+            root,
+            server: "s",
+            project: "p",
+            deletionCap: 10,
+            watch: DEFAULT_WATCH,
+          };
+          assert.equal((await runSync(cfg, api)).stats.errors, 0);
+          const old = join(root, `main/${source}/010-a`);
+          assert.ok(existsSync(join(old, "card.yaml")));
+          cards[0]!.listId = id(destination);
+          for (const dry of [true, false]) {
+            const report = await runSync(cfg, api, { conflicts, dry });
+            assert.equal(report.stats.errors, 0, JSON.stringify(report.events));
+            assert.equal(report.stats.pushed, 0);
+            assert.equal(cards[0]!.listId, id(destination));
+            if (dry) assert.ok(existsSync(join(old, "card.yaml")));
+          }
+          assert.ok(!existsSync(old));
+          assert.equal(
+            readFileSync(join(root, `main/${destination}/010-a/description.md`), "utf8"),
+            "Body.\n",
+          );
+          const next = await runSync(cfg, api);
+          assert.equal(next.stats.errors, 0);
+          assert.equal(next.stats.pushed, 0);
+          assert.equal(next.stats.written, 0);
+        } finally {
+          rmSync(root, { recursive: true, force: true });
+        }
+      });
+    }
+  }
+}
+
 for (const edit of ["none", "description", "title", "invalid", "conflict"]) {
   test(`remote list rename preserves cards with ${edit} local edit`, async () => {
     const root = mkdtempSync(join(tmpdir(), "planka-sync-list-rename-"));
@@ -193,6 +241,34 @@ for (const change of ["remote move", "local move", "remote reorder", "local reor
 }
 
 for (const builtin of ["archive", "trash"]) {
+  test(`local move into ${builtin} stays blocked`, async () => {
+    const root = mkdtempSync(join(tmpdir(), "planka-sync-local-builtin-"));
+    try {
+      const { api, cards, lists } = fakePlanka();
+      lists.push({ id: "90", boardId: "1", type: builtin, position: null, name: null });
+      const cfg: Config = {
+        root,
+        server: "s",
+        project: "p",
+        deletionCap: 10,
+        watch: DEFAULT_WATCH,
+      };
+      assert.equal((await runSync(cfg, api)).stats.errors, 0);
+      const dir = join(root, `main/${builtin}/010-a`);
+      renameSync(join(root, "main/010-todo/010-a"), dir);
+      const report = await runSync(cfg, api);
+      assert.ok(
+        report.events.some(
+          (e) => e.outcome === "blocked" && e.detail?.includes(`built-in ${builtin}`),
+        ),
+      );
+      assert.equal(cards[0]!.listId, "10");
+      assert.ok(existsSync(join(dir, "card.yaml")));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test(`named ${builtin} list does not shadow the built-in directory`, async () => {
     const root = mkdtempSync(join(tmpdir(), "planka-sync-builtin-"));
     try {
